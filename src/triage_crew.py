@@ -132,6 +132,10 @@ def _build_local_llm(enable_reasoning: bool = True) -> Any:
       LMSTUDIO_MODEL     (opcional: nombre específico del modelo. 
                           Si no se define, usa el modelo activo en LM Studio)
     """
+    # Habilitar logging detallado de LiteLLM
+    import litellm
+    litellm.set_verbose = True
+    
     base_url = os.getenv("LMSTUDIO_BASE_URL", _LMSTUDIO_DEFAULT_URL).rstrip("/")
     model = os.getenv("LMSTUDIO_MODEL", "")
     # Si no hay modelo explícito, LM Studio usa el que esté cargado.
