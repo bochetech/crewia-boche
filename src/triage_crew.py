@@ -838,14 +838,33 @@ class TriageCrew:
                         text = part.strip()
                         break
 
-            # Extraer el JSON final (última aparición si hay múltiples)
-            # Algunos modelos reasoning emiten JSON, luego piensan, luego JSON final
+            # Extraer el objeto JSON principal (el más grande, no el último).
+            # El modelo puede emitir varios objetos: el JSON raíz completo y objetos
+            # anidados como {"tool": "...", "status": "..."} dentro de actions_taken.
+            # Tomar el ÚLTIMO causaba el error: si el modelo terminaba con un objeto
+            # anidado, ese se usaba como raíz y faltaban classification/reasoning.
+            # Estrategia: intentar parsear todos los candidatos y quedarse con el
+            # primero que tenga los campos requeridos (classification + reasoning).
             matches = list(_re.finditer(r"\{.*?\}", text, _re.DOTALL))
             if matches:
-                # Tomar el ÚLTIMO match (respuesta final después de razonar)
-                text = matches[-1].group(0)
                 if len(matches) > 1:
-                    logger.debug("Multiple JSON objects found, using the last one (final answer)")
+                    logger.debug("Multiple JSON objects found (%d), picking best candidate", len(matches))
+                    # Buscar el primero que tenga classification y reasoning
+                    best = None
+                    for m in matches:
+                        try:
+                            candidate = json.loads(m.group(0))
+                            if "classification" in candidate and "reasoning" in candidate:
+                                best = m.group(0)
+                                break
+                        except json.JSONDecodeError:
+                            continue
+                    # Si ninguno tiene ambos campos, usar el más largo (probablemente el raíz)
+                    if best is None:
+                        best = max(matches, key=lambda m: len(m.group(0))).group(0)
+                    text = best
+                else:
+                    text = matches[0].group(0)
 
             # Intentar parsear; si falla porque el JSON está truncado, reparar
             try:
