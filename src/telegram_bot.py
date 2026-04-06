@@ -60,29 +60,30 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 _WELCOME = """
-👋 *Hola, soy Nia*
+Hola, soy Nia.
 
-Soy la Analista Estratégica de Triaje de Descorcha.  Envíame cualquier mensaje o correo y lo analizaré contra la estrategia corporativa.
+Soy la Analista Estratégica de Triaje de Descorcha. Envíame cualquier mensaje o correo y lo analizaré contra la estrategia corporativa.
 
 *¿Qué puedes enviarme?*
-• Texto de un email recibido (con De: y Asunto:)
-• Un mensaje de chat directo sobre un tema estratégico
+• Texto de un email (con De: y Asunto:)
+• Un mensaje directo sobre un tema estratégico
 • Una propuesta de proveedor, integración o servicio
 
 *Comandos disponibles:*
 /start — Este mensaje
 /help  — Ayuda
 /status — Estado del inbox
+/miid — Tu chat_id
 
-Escribe tu mensaje y lo proceso en segundos. 🚀
+Escribe tu mensaje y lo proceso en segundos.
 """.strip()
 
 _HELP = """
 *Nia — Analista Estratégica de Triaje*
 
 Envíame cualquier mensaje de texto y lo clasificaré como:
-• 🟢 *STRATEGIC* — Relevante para la estrategia Descorcha. Lo documento en Confluence, redacto un borrador de seguimiento y notifico al líder.
-• 🔴 *JUNK* — Spam o sin alineación estratégica. Lo descarto y notifico al líder.
+• *STRATEGIC* — Relevante para la estrategia Descorcha. Lo documento en Confluence, redacto un borrador de seguimiento y notifico al líder.
+• *JUNK* — Spam o sin alineación estratégica. Lo descarto y notifico al líder.
 
 *Formato sugerido para emails:*
 ```
@@ -96,6 +97,7 @@ Cuerpo del mensaje...
 /start  — Bienvenida
 /help   — Esta ayuda
 /status — Mensajes pendientes en el inbox
+/miid   — Obtener tu chat_id
 """.strip()
 
 
@@ -109,33 +111,32 @@ def _format_result(result: object) -> str:  # noqa: ANN001
 
     r: TriageDecisionOutput = result  # type: ignore[assignment]
 
-    icon = "🟢" if r.classification == "STRATEGIC" else "🔴"
     lines = [
-        f"{icon} *Clasificación: {r.classification}*",
+        f"*Clasificación: {r.classification}*",
         "",
-        f"📝 *Razonamiento:*",
+        f"*Razonamiento:*",
         f"_{r.reasoning[:400]}_",
         "",
-        f"📧 *Remitente:* {r.email_summary.sender or '—'}",
-        f"📌 *Asunto:* {r.email_summary.subject or '—'}",
+        f"*De:* {r.email_summary.sender or '—'}",
+        f"*Asunto:* {r.email_summary.subject or '—'}",
     ]
 
     if r.email_summary.key_topics:
-        lines.append(f"🏷️ *Temas:* {', '.join(r.email_summary.key_topics[:5])}")
+        lines.append(f"*Temas:* {', '.join(r.email_summary.key_topics[:5])}")
 
     if r.actions_taken:
-        lines += ["", "⚙️ *Acciones ejecutadas:*"]
+        lines += ["", "*Acciones ejecutadas:*"]
         for action in r.actions_taken:
-            status_icon = "✅" if action.status == "ok" else "❌"
+            status_icon = "✓" if action.status == "ok" else "✗"
             lines.append(f"  {status_icon} `{action.tool}` — {action.details[:120]}")
 
     if r.pending_approvals:
-        lines += ["", "🔐 *Pendiente de tu aprobación:*"]
+        lines += ["", "*Pendiente de tu aprobación:*"]
         for item in r.pending_approvals:
-            lines.append(f"  ⏳ {item}")
+            lines.append(f"  • {item}")
 
     if r.discarded and r.discard_reason:
-        lines += ["", f"🗑️ *Motivo de descarte:* {r.discard_reason}"]
+        lines += ["", f"*Motivo de descarte:* {r.discard_reason}"]
 
     return "\n".join(lines)
 
@@ -188,7 +189,7 @@ async def _handle_message(
     text = update.message.text or ""
 
     if not text.strip():
-        await update.message.reply_text("⚠️ Mensaje vacío. Envíame texto para triarlo.")
+        await update.message.reply_text("Mensaje vacío. Envíame texto para analizarlo.")
         return
 
     sender_label = f"@{user.username}" if user.username else f"tg:{user.id}"
@@ -196,7 +197,7 @@ async def _handle_message(
 
     # Acknowledge immediately so the user knows processing started
     ack = await update.message.reply_text(
-        "⏳ _Nia está analizando tu mensaje…_",
+        "_Analizando tu mensaje…_",
         parse_mode=constants.ParseMode.MARKDOWN,
     )
 
@@ -222,7 +223,7 @@ async def _handle_message(
     except Exception as exc:
         logger.exception("[TelegramBot] Error processing message")
         await ack.edit_text(
-            f"❌ Error procesando el mensaje:\n`{exc}`",
+            f"Error procesando el mensaje:\n`{exc}`",
             parse_mode=constants.ParseMode.MARKDOWN,
         )
 
