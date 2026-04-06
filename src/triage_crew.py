@@ -127,6 +127,10 @@ def _build_local_llm() -> Any:
       LMSTUDIO_BASE_URL  (default: http://localhost:1234/v1)
       LMSTUDIO_MODEL     (opcional: nombre específico del modelo. 
                           Si no se define, usa el modelo activo en LM Studio)
+    
+    Para modelos razonadores (qwen3, deepseek-r1):
+    - Intenta deshabilitar reasoning_content vía extra_body
+    - Si no funciona, el parser en _parse_crewai_output lo manejará
     """
     base_url = os.getenv("LMSTUDIO_BASE_URL", _LMSTUDIO_DEFAULT_URL).rstrip("/")
     model = os.getenv("LMSTUDIO_MODEL", "")
@@ -136,11 +140,28 @@ def _build_local_llm() -> Any:
 
     try:
         from crewai import LLM  # type: ignore
-        return LLM(
-            model=litellm_name,
-            base_url=base_url,
-            api_key="lm-studio",   # LM Studio ignores the key but LiteLLM requires one
-        )
+        
+        # Parámetros para deshabilitar reasoning en modelos que lo soporten
+        # https://platform.openai.com/docs/guides/reasoning
+        llm_config = {
+            "model": litellm_name,
+            "base_url": base_url,
+            "api_key": "lm-studio",
+            "temperature": 0.7,  # Un poco de creatividad pero no demasiado
+            "max_tokens": 2000,  # Limitar respuesta a 2K tokens máximo
+        }
+        
+        # Intentar deshabilitar reasoning_content si el servidor lo soporta
+        # Algunos modelos reasoning (qwen3.5, deepseek-r1) respetan esto
+        try:
+            llm_config["extra_body"] = {
+                "reasoning_content": False,  # No incluir <think> en la respuesta
+                "stop": ["<think>", "</think>"],  # Detener si empieza a pensar
+            }
+        except Exception:
+            pass  # Si no soporta extra_body, continuamos sin él
+        
+        return LLM(**llm_config)
     except Exception as exc:
         logger.debug("Could not build local LLM: %s", exc)
         return None
@@ -563,6 +584,11 @@ class TriageCrew:
           - ``.pydantic``   : Already-validated Pydantic model (when output_pydantic set)
           - ``.json_dict``  : Parsed dict (when output is valid JSON)
           - ``.raw``        : Raw string output from the LLM
+        
+        Para modelos razonadores (qwen3, deepseek-r1, etc):
+        - Detecta y remueve bloques <think>...</think>
+        - Extrae solo la respuesta final (JSON después del razonamiento)
+        - Registra cuando encuentra cadenas de pensamiento
         """
         try:
             # 1) Best case: crewai already validated into our Pydantic model
@@ -574,24 +600,55 @@ class TriageCrew:
             if hasattr(raw, "json_dict") and raw.json_dict:
                 return TriageDecisionOutput(**raw.json_dict)
 
-            # 3) Raw string — strip <think>…</think> blocks (reasoning models),
-            #    then markdown fences, then parse JSON.
+            # 3) Raw string — strip reasoning blocks and extract final answer
             text = raw.raw if hasattr(raw, "raw") else str(raw)
-
-            # Remove <think>…</think> block emitted by qwen3/deepseek-r1 etc.
+            original_length = len(text)
+            
+            # Detectar y remover bloques de razonamiento comunes:
+            # - <think>...</think> (qwen3.5, deepseek-r1)
+            # - <reasoning>...</reasoning> (algunos modelos custom)
+            # - <!-- thinking -->...</!-- /thinking --> (modelos que usan comentarios HTML)
             import re as _re
-            text = _re.sub(r"<think>.*?</think>", "", text, flags=_re.DOTALL).strip()
+            
+            # Remover bloques <think>
+            text_after_think = _re.sub(r"<think>.*?</think>", "", text, flags=_re.DOTALL | _re.IGNORECASE)
+            
+            # Remover bloques <reasoning>
+            text_after_reasoning = _re.sub(r"<reasoning>.*?</reasoning>", "", text_after_think, flags=_re.DOTALL | _re.IGNORECASE)
+            
+            # Remover comentarios HTML de pensamiento
+            text_cleaned = _re.sub(r"<!--\s*thinking\s*-->.*?<!--\s*/thinking\s*-->", "", text_after_reasoning, flags=_re.DOTALL | _re.IGNORECASE)
+            
+            text = text_cleaned.strip()
+            
+            # Log cuando detectamos razonamiento (útil para debug)
+            if len(text) < original_length * 0.8:  # Si eliminamos más del 20%
+                removed_chars = original_length - len(text)
+                logger.info(
+                    "🧠 Reasoning block detected and removed: %d chars → %d chars (-%d)",
+                    original_length, len(text), removed_chars
+                )
 
-            # Strip markdown code fences
+            # Strip markdown code fences (```json...```)
             if "```" in text:
-                text = text.split("```")[1]
-                if text.startswith("json"):
-                    text = text[4:]
+                parts = text.split("```")
+                # Buscar el primer bloque que parezca JSON
+                for part in parts[1::2]:  # Solo bloques dentro de ```
+                    if part.strip().startswith("json"):
+                        text = part[4:].strip()
+                        break
+                    elif part.strip().startswith("{"):
+                        text = part.strip()
+                        break
 
-            # Find first { … } JSON object in case there is surrounding prose
-            match = _re.search(r"\{.*\}", text, _re.DOTALL)
-            if match:
-                text = match.group(0)
+            # Extraer el JSON final (última aparición si hay múltiples)
+            # Algunos modelos reasoning emiten JSON, luego piensan, luego JSON final
+            matches = list(_re.finditer(r"\{.*?\}", text, _re.DOTALL))
+            if matches:
+                # Tomar el ÚLTIMO match (respuesta final después de razonar)
+                text = matches[-1].group(0)
+                if len(matches) > 1:
+                    logger.debug("Multiple JSON objects found, using the last one (final answer)")
 
             data = json.loads(text.strip())
             return TriageDecisionOutput(**data)

@@ -11,6 +11,15 @@ tasks:
       en cada paso antes de pasar al siguiente.
 
       ═══════════════════════════════════════════════════════
+      IMPORTANTE: FORMATO DE RESPUESTA
+      ═══════════════════════════════════════════════════════
+      - NO emitas bloques de razonamiento interno (<think>, <reasoning>, etc.)
+      - NO uses comentarios HTML para tu proceso de pensamiento
+      - Razona internamente pero responde SOLO con JSON estructurado
+      - Si debes mostrar tu razonamiento, inclúyelo en el campo "reasoning"
+      - Omite cualquier texto antes o después del JSON
+      
+      ═══════════════════════════════════════════════════════
       PASO 1 — CLASIFICACIÓN
       ═══════════════════════════════════════════════════════
       Lee el correo completo. Razona si agrega valor al negocio o a las operaciones

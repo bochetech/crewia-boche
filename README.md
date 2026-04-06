@@ -36,6 +36,42 @@ than the context length. Try to load the model with a larger context length
 - `qwen/qwen2.5-14b` → contexto 32K, excelente balance
 - `mistral/mistral-7b-instruct` → contexto 32K, rápido
 
+### ⚠️ Problema 2: Modelos razonadores lentos (qwen3.5, deepseek-r1)
+
+**Síntoma**: Timeout después de 120 segundos, o respuestas muy lentas con bloques `<think>...</think>`
+
+**Causa**: Modelos razonadores emiten cadenas de pensamiento (chain-of-thought) internas que aumentan latencia.
+
+**Solución implementada** (3 niveles de protección):
+
+1. **Parámetros del LLM** (`src/triage_crew.py`):
+   ```python
+   extra_body = {
+       "reasoning_content": False,  # No incluir <think> en la respuesta
+       "stop": ["<think>", "</think>"],  # Detener si empieza a pensar
+   }
+   ```
+
+2. **Parser inteligente** — Detecta y remueve automáticamente:
+   - Bloques `<think>...</think>` (qwen3.5, deepseek-r1)
+   - Bloques `<reasoning>...</reasoning>` (modelos custom)
+   - Comentarios HTML de pensamiento `<!-- thinking -->`
+   - Extrae el **último JSON** (respuesta final después de razonar)
+
+3. **Instrucciones en el prompt** (`config/tasks.yaml`):
+   ```yaml
+   - NO emitas bloques de razonamiento interno (<think>, <reasoning>, etc.)
+   - Razona internamente pero responde SOLO con JSON estructurado
+   - Omite cualquier texto antes o después del JSON
+   ```
+
+**Recomendación**: Para producción, usa modelos **no-razonadores** como:
+- ✅ `qwen/qwen2.5-14b` — rápido, sin reasoning
+- ✅ `mistral/mistral-7b-instruct` — muy rápido
+- ⚠️ `qwen3.5-9b`, `deepseek-r1` — razonadores, más lentos (protección activa)
+
+Si necesitas reasoning, las protecciones están activas pero espera latencias de 30-60s.
+
 ## ⚙️ What's Included
 
 - `.env.example` — example environment variables
