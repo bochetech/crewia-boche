@@ -153,26 +153,29 @@ def _build_local_llm(enable_reasoning: bool = True) -> Any:
             # ── TRIAGE ──────────────────────────────────────────────────────
             # Reasoning habilitado: el modelo puede pensar antes de responder.
             # El parser en kickoff() extraerá el JSON tras el bloque <think>.
+            # NO usamos extra_body.reasoning porque litellm no maneja correctamente
+            # el formato de output de LM Studio (array con {type: "reasoning"} y
+            # {type: "message"}) — el content queda vacío.
             extra_body = {
-                "reasoning": "on",           # API oficial LM Studio
                 "max_output_tokens": 1500,   # Suficiente para JSON completo + razonamiento
                 "repeat_penalty": 1.05,
                 "top_p": 0.95,
             }
             max_tokens = 1500
-            logger.info("🔧 LLM config (TRIAGE): reasoning=on, max_output_tokens=1500")
+            logger.info("🔧 LLM config (TRIAGE): max_output_tokens=1500, reasoning en texto plano")
         else:
             # ── CONVERSACIÓN ─────────────────────────────────────────────────
-            # Reasoning desactivado: respuesta directa sin bloque de pensamiento.
+            # Sin reasoning: respuesta directa. El modelo Qwen3 igual genera un
+            # mini-razonamiento (es su comportamiento default), pero el parser
+            # lo filtra con regex.
             extra_body = {
-                "reasoning": "off",          # API oficial LM Studio ← fix principal
-                "max_output_tokens": 300,    # API oficial LM Studio
+                "max_output_tokens": 300,
                 "repeat_penalty": 1.1,
                 "top_p": 0.9,
                 "min_p": 0.05,
             }
             max_tokens = 300
-            logger.info("🔧 LLM config (CONVERSACIÓN): reasoning=off, max_output_tokens=300")
+            logger.info("🔧 LLM config (CONVERSACIÓN): max_output_tokens=300, parser filtra reasoning")
 
         return LLM(
             model=litellm_name,
@@ -650,12 +653,15 @@ class TriageCrew:
             # Usar configuración del agente desde agents.yaml
             agent_cfg = self._agents_cfg.get("agents", {}).get("triage_analyst", {})
             
-            # Backstory y goal minimalistas
-            conversation_backstory = "Asistente de información técnica y estratégica."
+            # Backstory minimalista + instrucción explícita de NO razonar en texto plano
+            conversation_backstory = (
+                "Asistente de información técnica y estratégica. "
+                "Responde de forma directa sin mostrar tu razonamiento interno."
+            )
             
             agent = Agent(
                 role="Asistente",
-                goal="Responder la pregunta",
+                goal="Responder la pregunta de forma concisa",
                 backstory=conversation_backstory,
                 llm=conversation_llm,
                 tools=[],  # Sin herramientas para conversación
