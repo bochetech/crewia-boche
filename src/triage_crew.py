@@ -636,14 +636,12 @@ class TriageCrew:
             # Usar configuración del agente desde agents.yaml
             agent_cfg = self._agents_cfg.get("agents", {}).get("triage_analyst", {})
             
-            # Backstory ultra minimalista
-            conversation_backstory = (
-                "Analista estratégica especializada en tecnología, automatización y gestión de operaciones."
-            )
+            # Backstory y goal minimalistas
+            conversation_backstory = "Asistente de información técnica y estratégica."
             
             agent = Agent(
-                role="Asistente de Estrategia",
-                goal="Responder preguntas de forma directa y profesional en 1-3 oraciones",
+                role="Asistente",
+                goal="Responder la pregunta",
                 backstory=conversation_backstory,
                 llm=conversation_llm,
                 tools=[],  # Sin herramientas para conversación
