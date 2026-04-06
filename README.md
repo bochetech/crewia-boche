@@ -42,14 +42,33 @@ than the context length. Try to load the model with a larger context length
 
 **Causa**: Modelos razonadores emiten cadenas de pensamiento (chain-of-thought) internas que aumentan latencia.
 
-**Solución implementada** (3 niveles de protección):
+**Solución implementada** — **Dos modalidades distintas**:
+
+### 🎯 **Modo TRIAGE** (análisis profundo con reasoning)
+- **Función**: `crew.kickoff(email_text)` 
+- **Reasoning**: ✅ HABILITADO — el modelo puede emitir `<think>` para análisis profundo
+- **Parser inteligente**: Detecta y extrae solo la **respuesta final** (último JSON después de razonar)
+- **Timeout**: 120 segundos
+- **Uso**: Clasificación de emails, documentación, decisiones estratégicas
+
+### 💬 **Modo CONVERSACIÓN** (respuestas rápidas sin reasoning)
+- **Función**: `crew.kickoff_conversation(message, history)`
+- **Reasoning**: ❌ DESHABILITADO — parámetros `reasoning_content=False` y `stop=[<think>]`
+- **Sin herramientas**: Solo conversación natural, sin acceso a Confluence/Email/Notificaciones
+- **Timeout**: 30 segundos
+- **Uso**: Preguntas rápidas, saludos, opiniones estratégicas
+
+### 🛡️ **Protecciones implementadas**:
 
 1. **Parámetros del LLM** (`src/triage_crew.py`):
    ```python
-   extra_body = {
-       "reasoning_content": False,  # No incluir <think> en la respuesta
-       "stop": ["<think>", "</think>"],  # Detener si empieza a pensar
+   # CONVERSACIÓN: reasoning deshabilitado
+   llm_config["extra_body"] = {
+       "reasoning_content": False,
+       "stop": ["<think>", "</think>"],
    }
+   
+   # TRIAGE: reasoning habilitado (parser extrae respuesta final)
    ```
 
 2. **Parser inteligente** — Detecta y remueve automáticamente:
@@ -65,12 +84,11 @@ than the context length. Try to load the model with a larger context length
    - Omite cualquier texto antes o después del JSON
    ```
 
-**Recomendación**: Para producción, usa modelos **no-razonadores** como:
-- ✅ `qwen/qwen2.5-14b` — rápido, sin reasoning
-- ✅ `mistral/mistral-7b-instruct` — muy rápido
-- ⚠️ `qwen3.5-9b`, `deepseek-r1` — razonadores, más lentos (protección activa)
+**Recomendación de modelos**:
+- ✅ **Con reasoning** (TRIAGE): `qwen3.5-9b`, `deepseek-r1` — análisis profundo, 30-60s
+- ✅ **Sin reasoning** (GENERAL): `qwen/qwen2.5-14b`, `mistral/mistral-7b-instruct` — rápido, 5-10s
 
-Si necesitas reasoning, las protecciones están activas pero espera latencias de 30-60s.
+**Beneficio**: El mismo modelo puede servir ambas modalidades, optimizando recursos mientras obtiene análisis profundo cuando se necesita y respuestas rápidas para conversación.
 
 ## ⚙️ What's Included
 

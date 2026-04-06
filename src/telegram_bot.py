@@ -371,65 +371,45 @@ async def _handle_conversation(
                 )
             return
     
-    # ── Respuestas conversacionales estándar ────────────────────────────────
-    if any(word in text_lower for word in ["hola", "holi", "buenas", "saludos"]):
-        response = (
-            "Hola! Soy Nia, tu Analista Estratégica de Triaje.\n\n"
-            "Puedo ayudarte de dos formas:\n"
-            "• *Conversación*: pregúntame sobre estrategia, procesos o cómo funciono\n"
-            "• *Triage*: envíame un email completo (con De: y Asunto:) para clasificarlo\n\n"
-            "¿En qué te puedo ayudar?"
+    # ── Respuestas conversacionales con LLM (SIN reasoning) ────────────────
+    # En lugar de respuestas enlatadas, usar kickoff_conversation() para 
+    # respuestas dinámicas y contextuales
+    
+    try:
+        crew: TriageCrew = context.bot_data["crew"]
+        loop = asyncio.get_event_loop()
+        
+        # Mostrar indicador de escritura
+        await update.message.chat.send_action(action=constants.ChatAction.TYPING)
+        
+        # Llamar a kickoff_conversation() con historial
+        history = context.user_data.get("conversation_history", [])
+        response = await loop.run_in_executor(
+            None,
+            crew.kickoff_conversation,
+            text,
+            history
         )
-    elif any(word in text_lower for word in ["cómo estás", "como estas", "qué tal", "que tal"]):
-        response = (
-            "Funcionando perfectamente, gracias por preguntar.\n\n"
-            "Estoy monitoreando `niaboche@gmail.com` cada 60 segundos y lista para "
-            "clasificar cualquier mensaje que me envíes.\n\n"
-            "¿Tienes algún email que quieras que analice?"
-        )
-    elif "ayuda" in text_lower or "ayúdame" in text_lower or "ayudame" in text_lower:
-        response = (
-            "Claro, te ayudo.\n\n"
-            "*Para triage de emails:*\n"
-            "Envíame el texto completo del email con este formato:\n"
-            "```\nDe: remitente@ejemplo.com\nAsunto: Título del email\n\n"
-            "Cuerpo del mensaje...\n```\n\n"
-            "*Para conversación:*\n"
-            "Pregúntame lo que necesites. Recuerdo el contexto de nuestra conversación "
-            "y puedo ayudarte a decidir si algo requiere triage."
-        )
-    elif "nia" in text_lower and "?" in text:
-        response = (
-            "Soy Nia, Analista Estratégica de Triaje para Descorcha.\n\n"
-            "Mi trabajo es:\n"
-            "• Clasificar emails/mensajes como STRATEGIC o JUNK\n"
-            "• Documentar información relevante en Confluence\n"
-            "• Redactar borradores de respuesta cuando se necesita colaboración\n"
-            "• Notificar al líder técnico de decisiones importantes\n\n"
-            "Trabajo con una cascada de modelos:\n"
-            "1. LM Studio local (tu máquina)\n"
-            "2. Gemini (si local falla)\n"
-            "3. Clasificador determinístico (último recurso)"
-        )
-    elif any(word in text_lower for word in ["opinas", "piensas", "crees", "qué te parece", "que te parece"]):
-        # Pregunta de opinión — responder con contexto estratégico y ofrecer acción
-        response = _generate_strategic_opinion(text, context.user_data["conversation_history"])
-    else:
-        # Respuesta genérica con opción de triage
+        
+        # Agregar respuesta de Nia al historial
+        context.user_data["conversation_history"].append({
+            "role": "assistant",
+            "content": response,
+            "timestamp": time.time()
+        })
+        
+        await update.message.reply_text(response, parse_mode=constants.ParseMode.MARKDOWN)
+        
+    except Exception as exc:
+        logger.exception("[TelegramBot] Error en conversación")
+        
+        # Fallback a respuesta genérica si el LLM falla
         response = (
             "Entiendo. ¿Quieres que analice esto formalmente y ejecute acciones "
             "(documentar, notificar, etc.)?\n\n"
-            "Si quieres que proceda con el triage completo, responde: *'Sí'* o *'Hazlo'*\n\n"
-            "Si solo era una pregunta, puedes seguir conversando normalmente."
+            "Si quieres que proceda con el triage completo, responde: *'Sí'* o *'Hazlo'*"
         )
-    
-    # Agregar respuesta de Nia al historial
-    context.user_data["conversation_history"].append({
-        "role": "assistant",
-        "content": response
-    })
-    
-    await update.message.reply_text(response, parse_mode=constants.ParseMode.MARKDOWN)
+        await update.message.reply_text(response, parse_mode=constants.ParseMode.MARKDOWN)
 
 
 def _generate_strategic_opinion(text: str, history: list) -> str:

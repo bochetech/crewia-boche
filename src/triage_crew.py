@@ -115,7 +115,7 @@ def _build_llm(tier: str = "premium", api_key: Optional[str] = None) -> Any:
     return _StubLLM(model_name, api_key)
 
 
-def _build_local_llm() -> Any:
+def _build_local_llm(enable_reasoning: bool = True) -> Any:
     """Build an LLM pointing to the local LM Studio server.
 
     Uses LiteLLM's OpenAI-compatible provider via crewai LLM:
@@ -123,14 +123,14 @@ def _build_local_llm() -> Any:
       api_base = http://localhost:1234/v1
       api_key  = "lm-studio"  (any non-empty string works)
 
+    Args:
+        enable_reasoning: Si True, permite reasoning (<think>) para análisis profundo.
+                         Si False, suprime reasoning para respuestas rápidas (conversación).
+
     Reads from .env:
       LMSTUDIO_BASE_URL  (default: http://localhost:1234/v1)
       LMSTUDIO_MODEL     (opcional: nombre específico del modelo. 
                           Si no se define, usa el modelo activo en LM Studio)
-    
-    Para modelos razonadores (qwen3, deepseek-r1):
-    - Intenta deshabilitar reasoning_content vía extra_body
-    - Si no funciona, el parser en _parse_crewai_output lo manejará
     """
     base_url = os.getenv("LMSTUDIO_BASE_URL", _LMSTUDIO_DEFAULT_URL).rstrip("/")
     model = os.getenv("LMSTUDIO_MODEL", "")
@@ -141,25 +141,29 @@ def _build_local_llm() -> Any:
     try:
         from crewai import LLM  # type: ignore
         
-        # Parámetros para deshabilitar reasoning en modelos que lo soporten
-        # https://platform.openai.com/docs/guides/reasoning
         llm_config = {
             "model": litellm_name,
             "base_url": base_url,
             "api_key": "lm-studio",
-            "temperature": 0.7,  # Un poco de creatividad pero no demasiado
-            "max_tokens": 2000,  # Limitar respuesta a 2K tokens máximo
+            "temperature": 0.7,
+            "max_tokens": 2000,
         }
         
-        # Intentar deshabilitar reasoning_content si el servidor lo soporta
-        # Algunos modelos reasoning (qwen3.5, deepseek-r1) respetan esto
-        try:
-            llm_config["extra_body"] = {
-                "reasoning_content": False,  # No incluir <think> en la respuesta
-                "stop": ["<think>", "</think>"],  # Detener si empieza a pensar
-            }
-        except Exception:
-            pass  # Si no soporta extra_body, continuamos sin él
+        # Configurar reasoning según el contexto de uso
+        if not enable_reasoning:
+            # CONVERSACIÓN: Deshabilitar reasoning para respuestas rápidas
+            try:
+                llm_config["extra_body"] = {
+                    "reasoning_content": False,  # No incluir <think>
+                    "stop": ["<think>", "</think>"],  # Detener si empieza
+                }
+                logger.debug("LLM config: reasoning DISABLED (conversation mode)")
+            except Exception:
+                pass
+        else:
+            # TRIAGE: Permitir reasoning pero extraer solo respuesta final
+            # El parser en _parse_crewai_output extraerá el JSON después de <think>
+            logger.debug("LLM config: reasoning ENABLED (triage mode)")
         
         return LLM(**llm_config)
     except Exception as exc:
@@ -574,6 +578,88 @@ class TriageCrew:
         # ── Tier 3: Deterministic stub ──────────────────────────────────────
         logger.warning("All LLMs unavailable — using deterministic stub pipeline")
         return _run_stub_pipeline(email_entrante)
+
+    # ------------------------------------------------------------------
+    def kickoff_conversation(self, user_message: str, conversation_history: list = None) -> str:
+        """Run a lightweight conversation (NO REASONING) for quick responses.
+        
+        Diferencia clave con kickoff():
+        - kickoff() → Triage analítico profundo con reasoning habilitado
+        - kickoff_conversation() → Respuestas rápidas sin <think> blocks
+        
+        Args:
+            user_message: Mensaje del usuario (pregunta, saludo, etc.)
+            conversation_history: Lista de mensajes previos (opcional)
+            
+        Returns:
+            Respuesta de texto directo (no TriageDecisionOutput)
+        """
+        # Build temporary LLM WITHOUT reasoning for fast responses
+        conversation_llm = _build_local_llm(enable_reasoning=False)
+        
+        if conversation_llm is None:
+            return "Lo siento, no puedo procesar tu mensaje en este momento."
+        
+        try:
+            from crewai import Agent, Crew, Task  # type: ignore
+            
+            # Agent con personalidad de Nia pero sin herramientas de triage
+            agent = Agent(
+                role="Nia — Asistente Conversacional",
+                goal="Responder preguntas y mantener conversaciones naturales",
+                backstory=self._agents_cfg.get("agents", {}).get("triage_analyst", {}).get("backstory", ""),
+                llm=conversation_llm,
+                tools=[],  # Sin herramientas — solo conversación
+                verbose=False,
+                max_iter=1,  # Solo una respuesta directa
+                allow_delegation=False,
+            )
+            
+            # Task de conversación simple
+            context_str = ""
+            if conversation_history:
+                context_str = "\n\nContexto de la conversación previa:\n"
+                context_str += "\n".join([f"- {msg['role']}: {msg['content']}" for msg in conversation_history[-5:]])
+            
+            task = Task(
+                description=f"""Responde de forma natural y conversacional al usuario.
+                
+Mensaje del usuario: {user_message}
+{context_str}
+
+IMPORTANTE:
+- Responde DIRECTAMENTE en texto plano (no JSON)
+- Sé breve y clara (máximo 2-3 oraciones)
+- Usa un tono amigable y profesional
+- NO uses bloques de razonamiento (<think>, etc.)
+- Si te preguntan sobre triaje, ofrece ayuda pero no ejecutes triage aquí
+""",
+                expected_output="Respuesta conversacional en texto plano",
+                agent=agent,
+            )
+            
+            crew = Crew(
+                agents=[agent],
+                tasks=[task],
+                verbose=False,
+            )
+            
+            # Ejecutar con timeout corto (30s para conversación)
+            raw = self._run_with_timeout(
+                crew.kickoff,
+                timeout_seconds=30
+            )
+            
+            # Extraer texto de la respuesta
+            if hasattr(raw, "raw"):
+                return raw.raw.strip()
+            return str(raw).strip()
+            
+        except TimeoutError:
+            return "Disculpa, tardé demasiado en responder. ¿Puedes reformular tu pregunta?"
+        except Exception as exc:
+            logger.warning("Conversation kickoff failed: %s", exc)
+            return "Ocurrió un error procesando tu mensaje. ¿Puedes intentar de nuevo?"
 
     # ------------------------------------------------------------------
     @staticmethod
