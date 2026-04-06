@@ -119,23 +119,27 @@ def _build_local_llm(enable_reasoning: bool = True) -> Any:
     """Build an LLM pointing to the local LM Studio server.
 
     Uses LiteLLM's OpenAI-compatible provider via crewai LLM:
-      model   = "openai/auto" (LM Studio usará el modelo activo)
+      model    = "openai/auto" (LM Studio usará el modelo activo)
       api_base = http://localhost:1234/v1
       api_key  = "lm-studio"  (any non-empty string works)
 
     Args:
-        enable_reasoning: Si True, permite reasoning (<think>) para análisis profundo.
-                         Si False, suprime reasoning para respuestas rápidas (conversación).
+        enable_reasoning: Si True, permite reasoning para análisis profundo (triage).
+                         Si False, desactiva reasoning para respuestas rápidas (conversación).
 
     Reads from .env:
       LMSTUDIO_BASE_URL  (default: http://localhost:1234/v1)
-      LMSTUDIO_MODEL     (opcional: nombre específico del modelo. 
+      LMSTUDIO_MODEL     (opcional: nombre específico del modelo.
                           Si no se define, usa el modelo activo en LM Studio)
+
+    LM Studio API reference:
+      - reasoning: "off"|"low"|"medium"|"high"|"on"  ← parámetro oficial LM Studio
+      - max_output_tokens: int                        ← nombre correcto en LM Studio
+      - repeat_penalty, top_p, top_k, min_p          ← soportados nativamente
     """
-    # Habilitar logging detallado de LiteLLM
     import litellm
     litellm.set_verbose = True
-    
+
     base_url = os.getenv("LMSTUDIO_BASE_URL", _LMSTUDIO_DEFAULT_URL).rstrip("/")
     model = os.getenv("LMSTUDIO_MODEL", "")
     # Si no hay modelo explícito, LM Studio usa el que esté cargado.
@@ -144,37 +148,41 @@ def _build_local_llm(enable_reasoning: bool = True) -> Any:
 
     try:
         from crewai import LLM  # type: ignore
-        
-        llm_config = {
-            "model": litellm_name,
-            "base_url": base_url,
-            "api_key": "lm-studio",
-            "temperature": 0.7,
-            "max_tokens": 1000 if enable_reasoning else 500,
-            "verbose": True,  # HABILITAR LOGS
-        }
-        
-        # Configurar reasoning según el contexto de uso
-        if not enable_reasoning:
-            # CONVERSACIÓN: Deshabilitar reasoning para respuestas rápidas
-            try:
-                llm_config["extra_body"] = {
-                    "reasoning_content": False,   # OpenAI-compatible
-                    "enable_thinking": False,      # Qwen3 específico
-                    "thinking": {"type": "disabled"},  # Alternativa Qwen3
-                    "repeat_penalty": 1.1,
-                    "top_p": 0.9,
-                    "min_p": 0.05,
-                }
-                logger.info("🔧 LLM config (CONVERSACIÓN): reasoning=False, max_tokens=200, stop sequences activas")
-            except Exception:
-                pass
+
+        if enable_reasoning:
+            # ── TRIAGE ──────────────────────────────────────────────────────
+            # Reasoning habilitado: el modelo puede pensar antes de responder.
+            # El parser en kickoff() extraerá el JSON tras el bloque <think>.
+            extra_body = {
+                "reasoning": "on",           # API oficial LM Studio
+                "max_output_tokens": 1000,   # API oficial LM Studio
+                "repeat_penalty": 1.05,
+                "top_p": 0.95,
+            }
+            max_tokens = 1000
+            logger.info("🔧 LLM config (TRIAGE): reasoning=on, max_output_tokens=1000")
         else:
-            # TRIAGE: Permitir reasoning pero extraer solo respuesta final
-            # El parser en _parse_crewai_output extraerá el JSON después de <think>
-            logger.info("🔧 LLM config (TRIAGE): reasoning=True, max_tokens=2000")
-        
-        return LLM(**llm_config)
+            # ── CONVERSACIÓN ─────────────────────────────────────────────────
+            # Reasoning desactivado: respuesta directa sin bloque de pensamiento.
+            extra_body = {
+                "reasoning": "off",          # API oficial LM Studio ← fix principal
+                "max_output_tokens": 300,    # API oficial LM Studio
+                "repeat_penalty": 1.1,
+                "top_p": 0.9,
+                "min_p": 0.05,
+            }
+            max_tokens = 300
+            logger.info("🔧 LLM config (CONVERSACIÓN): reasoning=off, max_output_tokens=300")
+
+        return LLM(
+            model=litellm_name,
+            base_url=base_url,
+            api_key="lm-studio",
+            temperature=0.7,
+            max_tokens=max_tokens,   # litellm lo mapea a max_tokens en la solicitud
+            extra_body=extra_body,   # LM Studio lee reasoning y max_output_tokens de aquí
+            verbose=True,
+        )
     except Exception as exc:
         logger.debug("Could not build local LLM: %s", exc)
         return None
