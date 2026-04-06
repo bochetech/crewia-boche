@@ -272,10 +272,63 @@ async def _handle_conversation(
     text: str,
     sender_label: str,
 ) -> None:
-    """Handle conversational messages (not triage requests)."""
-    # Respuestas conversacionales simples basadas en el contexto de Nia
+    """Handle conversational messages with context memory."""
     text_lower = text.lower()
     
+    # Inicializar historial de conversación si no existe
+    if "conversation_history" not in context.user_data:
+        context.user_data["conversation_history"] = []
+    
+    # Agregar mensaje del usuario al historial
+    context.user_data["conversation_history"].append({
+        "role": "user",
+        "content": text
+    })
+    
+    # Limitar historial a últimos 10 mensajes (5 intercambios)
+    if len(context.user_data["conversation_history"]) > 10:
+        context.user_data["conversation_history"] = context.user_data["conversation_history"][-10:]
+    
+    # ── Comandos de control de conversación ─────────────────────────────────
+    if text_lower in ["listo", "ok", "dale", "hazlo", "sí", "si", "procede", "adelante"]:
+        # El usuario confirma una acción que Nia sugirió
+        history = context.user_data["conversation_history"]
+        if len(history) >= 2:
+            # Reconstruir contexto completo para triage
+            full_context = "\n\n".join([
+                f"{'Usuario' if msg['role'] == 'user' else 'Nia'}: {msg['content']}"
+                for msg in history[-6:]  # Últimos 3 intercambios
+            ])
+            
+            await update.message.reply_text("_Procesando con contexto completo…_", parse_mode=constants.ParseMode.MARKDOWN)
+            
+            # Ejecutar triage con contexto
+            triage_text = (
+                f"De: {sender_label}\n"
+                f"Asunto: Conversación → Solicitud de triage\n"
+                f"Canal: telegram\n\n"
+                f"CONTEXTO DE LA CONVERSACIÓN:\n{full_context}\n\n"
+                f"ACCIÓN: Usuario confirma proceder con el triage/documentación."
+            )
+            
+            try:
+                crew: TriageCrew = context.bot_data["crew"]
+                loop = asyncio.get_event_loop()
+                result = await loop.run_in_executor(None, crew.kickoff, triage_text)
+                reply = _format_result(result)
+                await update.message.reply_text(reply, parse_mode=constants.ParseMode.MARKDOWN)
+                
+                # Limpiar historial después de ejecutar acción
+                context.user_data["conversation_history"] = []
+            except Exception as exc:
+                logger.exception("[TelegramBot] Error en triage con contexto")
+                await update.message.reply_text(
+                    f"Error procesando: `{exc}`",
+                    parse_mode=constants.ParseMode.MARKDOWN,
+                )
+            return
+    
+    # ── Respuestas conversacionales estándar ────────────────────────────────
     if any(word in text_lower for word in ["hola", "holi", "buenas", "saludos"]):
         response = (
             "Hola! Soy Nia, tu Analista Estratégica de Triaje.\n\n"
@@ -299,8 +352,8 @@ async def _handle_conversation(
             "```\nDe: remitente@ejemplo.com\nAsunto: Título del email\n\n"
             "Cuerpo del mensaje...\n```\n\n"
             "*Para conversación:*\n"
-            "Simplemente pregúntame lo que necesites saber sobre estrategia, "
-            "procesos de Descorcha o mi funcionamiento."
+            "Pregúntame lo que necesites. Recuerdo el contexto de nuestra conversación "
+            "y puedo ayudarte a decidir si algo requiere triage."
         )
     elif "nia" in text_lower and "?" in text:
         response = (
@@ -315,19 +368,66 @@ async def _handle_conversation(
             "2. Gemini (si local falla)\n"
             "3. Clasificador determinístico (último recurso)"
         )
+    elif any(word in text_lower for word in ["opinas", "piensas", "crees", "qué te parece", "que te parece"]):
+        # Pregunta de opinión — responder con contexto estratégico y ofrecer acción
+        response = _generate_strategic_opinion(text, context.user_data["conversation_history"])
     else:
-        # Respuesta genérica para otras conversaciones
+        # Respuesta genérica con opción de triage
         response = (
-            "Entiendo que quieres conversar, pero no estoy segura de cómo responder a eso específicamente.\n\n"
-            "Puedo ayudarte mejor si:\n"
-            "• Me envías un email completo para clasificar (De: / Asunto: / Cuerpo)\n"
-            "• Me preguntas sobre estrategia de Descorcha\n"
-            "• Me pides ayuda sobre cómo usar el sistema de triage\n\n"
-            "¿Qué prefieres?"
+            "Entiendo. ¿Quieres que analice esto formalmente y ejecute acciones "
+            "(documentar, notificar, etc.)?\n\n"
+            "Si quieres que proceda con el triage completo, responde: *'Sí'* o *'Hazlo'*\n\n"
+            "Si solo era una pregunta, puedes seguir conversando normalmente."
         )
+    
+    # Agregar respuesta de Nia al historial
+    context.user_data["conversation_history"].append({
+        "role": "assistant",
+        "content": response
+    })
     
     await update.message.reply_text(response, parse_mode=constants.ParseMode.MARKDOWN)
 
+
+def _generate_strategic_opinion(text: str, history: list) -> str:
+    """Generate a strategic opinion and offer to formalize it."""
+    text_lower = text.lower()
+    
+    # Detectar temas estratégicos clave
+    if any(word in text_lower for word in ["shopify", "ecommerce", "e-commerce", "tienda"]):
+        return (
+            "Shopify está totalmente alineado con nuestra estrategia de eCommerce DTC. "
+            "Es una plataforma confiable, escalable y con integraciones nativas que pueden "
+            "acelerar el lanzamiento del canal digital.\n\n"
+            "¿Quieres que documente esta propuesta formalmente en Confluence y "
+            "notifique al líder técnico? Responde *'Sí'* y lo proceso completo."
+        )
+    elif any(word in text_lower for word in ["integración", "integracion", "api", "sap", "bokun", "bókun"]):
+        return (
+            "Las integraciones son un foco estratégico crítico. SAP y Bókun son sistemas "
+            "core que requieren BFFs y adaptadores robustos para garantizar confiabilidad operativa.\n\n"
+            "Si esto viene de un proveedor o propuesta externa, puedo documentarlo y "
+            "redactar un borrador de validación técnica. ¿Procedo?"
+        )
+    elif any(word in text_lower for word in ["automatización", "automatizacion", "digitalización", "digitalizacion"]):
+        return (
+            "La automatización y digitalización de procesos está en nuestros focos estratégicos, "
+            "especialmente para operaciones de campo y gestión interna.\n\n"
+            "¿Hay un proyecto específico que quieras que documente o escale? "
+            "Responde *'Sí'* y lo formalizo."
+        )
+    else:
+        return (
+            "Déjame pensar... Basándome en la estrategia de Descorcha, esto podría ser relevante "
+            "si toca áreas como DTC, fidelización, carriers, o eficiencia operativa.\n\n"
+            "¿Quieres que lo analice formalmente y determine si requiere documentación o escalamiento? "
+            "Responde *'Sí'* para proceder con el triage completo."
+        )
+
+
+# ---------------------------------------------------------------------------
+# Bot builder + runner
+# ---------------------------------------------------------------------------
 
 # ---------------------------------------------------------------------------
 # Bot builder + runner
