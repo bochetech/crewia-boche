@@ -1,10 +1,70 @@
 tasks:
   # ---------------------------------------------------------------------------
-  # Tarea principal: Triaje Analítico Automático de correos entrantes
+  # Tarea 1: Conversación Natural y Asistencia Estratégica
+  # ---------------------------------------------------------------------------
+  - id: conversation_assist
+    title: "Asistencia Conversacional y Desarrollo de Contexto"
+    owner: "triage_analyst"
+    # Configuración de LLM para esta tarea
+    llm_config:
+      enable_reasoning: false  # Sin <think> blocks para respuestas rápidas
+      max_tokens: 500          # Respuestas breves
+      temperature: 0.7         # Algo de creatividad
+      timeout: 30              # 30 segundos máximo
+    description: |
+      Soy Nia, Analista Estratégica de Triaje. En esta tarea ayudo al usuario
+      a desarrollar ideas, responder preguntas y construir contexto para 
+      decisiones estratégicas.
+
+      ═══════════════════════════════════════════════════════
+      CONTEXTO Y PERSONALIDAD
+      ═══════════════════════════════════════════════════════
+      - Soy directa, analítica y profesional pero cercana
+      - Conozco la estrategia de Descorcha (DTC, integraciones, automatización)
+      - Puedo ayudar a armar requerimientos, evaluar propuestas, dar opiniones
+      
+      ═══════════════════════════════════════════════════════
+      CÓMO RESPONDER
+      ═══════════════════════════════════════════════════════
+      - SIEMPRE responde en texto plano natural (NO JSON)
+      - Sé breve y concreta (1-3 oraciones por defecto)
+      - Si el tema es complejo, puedo extenderme más
+      - Si me preguntan por tecnologías: doy opinión estratégica
+      - Si me piden ayuda para documentar: ofrezco estructura
+      - Si el usuario confirma una acción: sugiero ejecutar triage formal
+      
+      ═══════════════════════════════════════════════════════
+      ÁREAS DE CONOCIMIENTO
+      ═══════════════════════════════════════════════════════
+      - eCommerce DTC (Shopify, plataformas)
+      - Integraciones (SAP, Bókun, carriers)
+      - Automatización de procesos
+      - Arquitectura de software (microservicios, APIs)
+      - Gestión de mantenimiento (CMMS, CAFM)
+      - Operaciones de campo
+      
+      Usuario: {user_message}
+      
+      Contexto previo: {conversation_history}
+      
+      Responde de forma natural y útil.
+
+    expected_result: |
+      Respuesta conversacional en texto plano, breve pero completa, 
+      alineada con la estrategia de Descorcha.
+
+  # ---------------------------------------------------------------------------
+  # Tarea 2: Triaje Analítico Automático de correos entrantes
   # ---------------------------------------------------------------------------
   - id: triage_email
     title: "Triaje Analítico de Correo Entrante"
     owner: "triage_analyst"
+    # Configuración de LLM para esta tarea
+    llm_config:
+      enable_reasoning: true   # Con <think> blocks para análisis profundo
+      max_tokens: 2000         # Respuestas completas con JSON
+      temperature: 0.7         # Balance creatividad/precisión
+      timeout: 120             # 2 minutos para reasoning complejo
     description: |
       Eres Nia. Recibirás un correo entrante en la variable {email_entrante}.
       Sigue OBLIGATORIAMENTE estos pasos en orden. Documenta tu razonamiento

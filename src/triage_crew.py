@@ -597,8 +597,8 @@ class TriageCrew:
         """Run a lightweight conversation (NO REASONING) for quick responses.
         
         Diferencia clave con kickoff():
-        - kickoff() → Triage analítico profundo con reasoning habilitado
-        - kickoff_conversation() → Respuestas rápidas sin <think> blocks
+        - kickoff() → Triage analítico profundo (task: triage_email, llm_config con reasoning)
+        - kickoff_conversation() → Respuestas rápidas (task: conversation_assist, llm_config sin reasoning)
         
         Args:
             user_message: Mensaje del usuario (pregunta, saludo, etc.)
@@ -607,17 +607,34 @@ class TriageCrew:
         Returns:
             Respuesta de texto directo (no TriageDecisionOutput)
         """
-        # Build temporary LLM WITHOUT reasoning for fast responses
-        conversation_llm = _build_local_llm(enable_reasoning=False)
-        
-        if conversation_llm is None:
-            return "Lo siento, no puedo procesar tu mensaje en este momento."
-        
         try:
-            from crewai import Agent, Crew, Task  # type: ignore
+            from crewai import Agent, Task, Crew  # type: ignore
             
-            # Agent con personalidad REDUCIDA para conversación (no necesita todo el contexto de triage)
-            # Backstory minimalista para reducir tokens del prompt
+            # Cargar TAREA de conversación desde tasks.yaml
+            conversation_task_cfg = None
+            for task_cfg in self._tasks_cfg.get("tasks", []):
+                if task_cfg.get("id") == "conversation_assist":
+                    conversation_task_cfg = task_cfg
+                    break
+            
+            if conversation_task_cfg is None:
+                return "Error: No se encontró la tarea 'conversation_assist' en tasks.yaml"
+            
+            # Leer llm_config de la tarea
+            llm_config = conversation_task_cfg.get("llm_config", {})
+            enable_reasoning = llm_config.get("enable_reasoning", False)
+            timeout = llm_config.get("timeout", 30)
+            
+            # Build LLM con configuración de la tarea
+            conversation_llm = _build_local_llm(enable_reasoning=enable_reasoning)
+            
+            if conversation_llm is None:
+                return "Lo siento, no puedo procesar tu mensaje en este momento."
+            
+            # Usar configuración del agente desde agents.yaml
+            agent_cfg = self._agents_cfg.get("agents", {}).get("triage_analyst", {})
+            
+            # Backstory reducido para conversación (menor uso de tokens)
             conversation_backstory = (
                 "Soy Nia, Analista Estratégica de Triaje para Descorcha. "
                 "Ayudo a clasificar emails, documentar información relevante y "
@@ -626,32 +643,35 @@ class TriageCrew:
             )
             
             agent = Agent(
-                role="Nia — Asistente Conversacional",
-                goal="Responder preguntas de forma natural y breve",
-                backstory=conversation_backstory,  # REDUCIDO — no usar backstory completo
+                role=agent_cfg.get("role", "Nia — Analista Estratégica"),
+                goal="Asistir en conversaciones y desarrollo de contexto estratégico",
+                backstory=conversation_backstory,
                 llm=conversation_llm,
-                tools=[],  # Sin herramientas — solo conversación
+                tools=[],  # Sin herramientas para conversación
                 verbose=False,
-                max_iter=1,  # Solo una respuesta directa
+                max_iter=1,
                 allow_delegation=False,
             )
             
-            # Task de conversación simple y CONCISA
+            # Construir contexto de conversación
             context_str = ""
             if conversation_history and len(conversation_history) > 0:
-                # Solo últimos 3 mensajes para limitar tokens
                 recent = conversation_history[-3:]
-                context_str = "\n".join([f"{msg['role']}: {msg['content'][:100]}" for msg in recent])
-                context_str = f"\nContexto previo:\n{context_str}\n"
+                context_str = "\n".join([
+                    f"{msg.get('role', 'user')}: {msg.get('content', '')[:100]}"
+                    for msg in recent
+                ])
+            
+            # Usar plantilla de la tarea con variables
+            task_description = conversation_task_cfg.get("description", "").format(
+                user_message=user_message[:500],
+                conversation_history=context_str or "(sin contexto previo)"
+            )
+            task_expected = conversation_task_cfg.get("expected_result", "Respuesta conversacional")
             
             task = Task(
-                description=f"""Responde brevemente al usuario.
-
-Mensaje: {user_message[:500]}
-{context_str}
-
-Responde en 1-3 oraciones, tono amigable y profesional.""",
-                expected_output="Respuesta conversacional breve",
+                description=task_description,
+                expected_output=task_expected,
                 agent=agent,
             )
             
@@ -661,10 +681,10 @@ Responde en 1-3 oraciones, tono amigable y profesional.""",
                 verbose=False,
             )
             
-            # Ejecutar con timeout corto (30s para conversación)
+            # Ejecutar con timeout de la config
             raw = self._run_with_timeout(
                 crew.kickoff,
-                timeout_seconds=30
+                timeout_seconds=timeout
             )
             
             # Extraer texto de la respuesta
