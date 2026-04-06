@@ -150,7 +150,7 @@ def _build_local_llm(enable_reasoning: bool = True) -> Any:
             "base_url": base_url,
             "api_key": "lm-studio",
             "temperature": 0.7,
-            "max_tokens": 2000 if enable_reasoning else 200,  # 200 tokens para conversación
+            "max_tokens": 1000 if enable_reasoning else 500,
             "verbose": True,  # HABILITAR LOGS
         }
         
@@ -722,6 +722,29 @@ class TriageCrew:
                 print("⚠️ RESPUESTA VACÍA - retornando mensaje de error")
                 return "Lo siento, no pude generar una respuesta. ¿Puedes intentar de nuevo?"
             
+            # Limpiar meta-comentarios del modelo que preceden la respuesta real.
+            # Qwen3 a veces emite una línea de instrucciones antes del contenido útil.
+            lines = result.splitlines()
+            # Buscar la primera línea que parezca contenido real (no instrucción meta)
+            meta_patterns = [
+                "remember to", "make sure to", "do not include", "think step by step",
+                "your goal is", "provide your", "note:", "important:", "hidden thought",
+            ]
+            clean_lines = []
+            content_started = False
+            for line in lines:
+                low = line.strip().lower()
+                is_meta = any(low.startswith(p) for p in meta_patterns)
+                if not is_meta and (line.strip() or content_started):
+                    content_started = True
+                    clean_lines.append(line)
+            
+            result = "\n".join(clean_lines).strip()
+            if not result:
+                # Si después de limpiar queda vacío, devolver original
+                result = raw.raw.strip() if hasattr(raw, "raw") else str(raw).strip()
+            
+            print(f"📥 RESPUESTA LIMPIA: '{result[:200]}'")
             return result
             
         except TimeoutError:
