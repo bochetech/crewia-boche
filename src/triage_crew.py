@@ -155,12 +155,12 @@ def _build_local_llm(enable_reasoning: bool = True) -> Any:
             # El parser en kickoff() extraerá el JSON tras el bloque <think>.
             extra_body = {
                 "reasoning": "on",           # API oficial LM Studio
-                "max_output_tokens": 1000,   # API oficial LM Studio
+                "max_output_tokens": 1500,   # Suficiente para JSON completo + razonamiento
                 "repeat_penalty": 1.05,
                 "top_p": 0.95,
             }
-            max_tokens = 1000
-            logger.info("🔧 LLM config (TRIAGE): reasoning=on, max_output_tokens=1000")
+            max_tokens = 1500
+            logger.info("🔧 LLM config (TRIAGE): reasoning=on, max_output_tokens=1500")
         else:
             # ── CONVERSACIÓN ─────────────────────────────────────────────────
             # Reasoning desactivado: respuesta directa sin bloque de pensamiento.
@@ -847,16 +847,32 @@ class TriageCrew:
                 if len(matches) > 1:
                     logger.debug("Multiple JSON objects found, using the last one (final answer)")
 
-            data = json.loads(text.strip())
+            # Intentar parsear; si falla porque el JSON está truncado, reparar
+            try:
+                data = json.loads(text.strip())
+            except json.JSONDecodeError:
+                # JSON truncado: el LLM se quedó sin tokens en medio de la respuesta.
+                # Intentar extraer campos parciales con regex antes de caer al fallback.
+                logger.warning("JSON truncated, attempting partial field extraction")
+                classification_match = _re.search(
+                    r'"classification"\s*:\s*"(STRATEGIC|JUNK)"', text, _re.IGNORECASE
+                )
+                reasoning_match = _re.search(
+                    r'"reasoning"\s*:\s*"([^"]{0,300})', text
+                )
+                data = {
+                    "classification": classification_match.group(1).upper() if classification_match else "STRATEGIC",
+                    "reasoning": reasoning_match.group(1) if reasoning_match else "Respuesta incompleta (JSON truncado por límite de tokens)",
+                }
+
             return TriageDecisionOutput(**data)
 
         except Exception as exc:
             logger.warning("Could not parse crewai output as TriageDecisionOutput: %s", exc)
             meta = _stub_extract_metadata(email_text)
-            raw_text = getattr(raw, "raw", None) or str(raw)
             return TriageDecisionOutput(
                 classification="STRATEGIC",
-                reasoning=raw_text[:500],
+                reasoning="No se pudo procesar la respuesta del modelo correctamente.",
                 email_summary=EmailSummary(sender=meta["sender"], subject=meta["subject"]),
                 actions_taken=[],
                 pending_approvals=["Revisar output del agente manualmente"],

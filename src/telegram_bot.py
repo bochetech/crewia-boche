@@ -129,31 +129,31 @@ def _format_result(result: object) -> str:  # noqa: ANN001
     r: TriageDecisionOutput = result  # type: ignore[assignment]
 
     lines = [
-        f"*Clasificación: {r.classification}*",
+        f"Clasificación: {r.classification}",
         "",
-        f"*Razonamiento:*",
-        f"_{r.reasoning[:400]}_",
+        f"Razonamiento:",
+        r.reasoning[:300],
         "",
-        f"*De:* {r.email_summary.sender or '—'}",
-        f"*Asunto:* {r.email_summary.subject or '—'}",
+        f"De: {r.email_summary.sender or '—'}",
+        f"Asunto: {r.email_summary.subject or '—'}",
     ]
 
     if r.email_summary.key_topics:
-        lines.append(f"*Temas:* {', '.join(r.email_summary.key_topics[:5])}")
+        lines.append(f"Temas: {', '.join(r.email_summary.key_topics[:5])}")
 
     if r.actions_taken:
-        lines += ["", "*Acciones ejecutadas:*"]
+        lines += ["", "Acciones ejecutadas:"]
         for action in r.actions_taken:
             status_icon = "✓" if action.status == "ok" else "✗"
-            lines.append(f"  {status_icon} `{action.tool}` — {action.details[:120]}")
+            lines.append(f"  {status_icon} {action.tool} — {action.details[:120]}")
 
     if r.pending_approvals:
-        lines += ["", "*Pendiente de tu aprobación:*"]
+        lines += ["", "Pendiente de tu aprobación:"]
         for item in r.pending_approvals:
             lines.append(f"  • {item}")
 
     if r.discarded and r.discard_reason:
-        lines += ["", f"*Motivo de descarte:* {r.discard_reason}"]
+        lines += ["", f"Motivo de descarte: {r.discard_reason}"]
 
     return "\n".join(lines)
 
