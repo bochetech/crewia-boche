@@ -400,7 +400,7 @@ async def _handle_conversation(
             "timestamp": time.time()
         })
         
-        await update.message.reply_text(response, parse_mode=constants.ParseMode.MARKDOWN)
+        await update.message.reply_text(response, parse_mode=None)
         
     except Exception as exc:
         logger.exception("[TelegramBot] Error en conversación")

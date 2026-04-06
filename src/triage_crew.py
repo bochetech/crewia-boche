@@ -489,7 +489,8 @@ class TriageCrew:
 
             task_kwargs: Dict[str, Any] = dict(
                 description=task_cfg.get("description", "Procesa el email: {email_entrante}"),
-                expected_output=task_cfg.get("expected_output", "JSON estructurado con clasificación"),
+                # tasks.yaml usa "expected_result" (no "expected_output")
+                expected_output=task_cfg.get("expected_result", task_cfg.get("expected_output", "JSON estructurado con clasificación")),
                 agent=agent,
             )
             # Reasoning models (qwen3, deepseek-r1, etc.) emit a long <think>…</think>
@@ -722,29 +723,39 @@ class TriageCrew:
                 print("⚠️ RESPUESTA VACÍA - retornando mensaje de error")
                 return "Lo siento, no pude generar una respuesta. ¿Puedes intentar de nuevo?"
             
-            # Limpiar meta-comentarios del modelo que preceden la respuesta real.
-            # Qwen3 a veces emite una línea de instrucciones antes del contenido útil.
-            lines = result.splitlines()
-            # Buscar la primera línea que parezca contenido real (no instrucción meta)
-            meta_patterns = [
-                "remember to", "make sure to", "do not include", "think step by step",
-                "your goal is", "provide your", "note:", "important:", "hidden thought",
+            # Limpiar bloques de razonamiento que Qwen3 emite antes del contenido real.
+            # El modelo escribe un bloque de "thinking" en texto plano antes de la respuesta.
+            # Estrategia: buscar la primera línea que empiece con # o con texto en español
+            # o después de una línea en blanco que siga a texto de razonamiento en inglés.
+            import re
+            
+            # Quitar bloques <think>...</think> si los hay
+            cleaned = re.sub(r'<think>.*?</think>', '', result, flags=re.DOTALL).strip()
+            if not cleaned:
+                cleaned = result
+            
+            # Detectar si hay un bloque de razonamiento (párrafos en inglés con "Let me", "I need", etc.)
+            # seguido del contenido real en español
+            reasoning_end_patterns = [
+                r'\n\n#',         # Encabezado markdown después de línea en blanco
+                r'\n\n[A-ZÁÉÍÓÚ]', # Párrafo en mayúscula (español) después de razonamiento
+                r'\nPara ',        # Respuesta típica en español
+                r'\nExcelente',
+                r'\nLos sistemas',
+                r'\nEn el contexto',
             ]
-            clean_lines = []
-            content_started = False
-            for line in lines:
-                low = line.strip().lower()
-                is_meta = any(low.startswith(p) for p in meta_patterns)
-                if not is_meta and (line.strip() or content_started):
-                    content_started = True
-                    clean_lines.append(line)
             
-            result = "\n".join(clean_lines).strip()
-            if not result:
-                # Si después de limpiar queda vacío, devolver original
-                result = raw.raw.strip() if hasattr(raw, "raw") else str(raw).strip()
+            for pattern in reasoning_end_patterns:
+                match = re.search(pattern, cleaned)
+                if match:
+                    candidate = cleaned[match.start():].strip()
+                    # Verificar que no sea solo otra línea de razonamiento
+                    if len(candidate) > 50:
+                        cleaned = candidate
+                        break
             
-            print(f"📥 RESPUESTA LIMPIA: '{result[:200]}'")
+            result = cleaned
+            print(f"📥 RESPUESTA FINAL LIMPIA: '{result[:200]}'")
             return result
             
         except TimeoutError:
