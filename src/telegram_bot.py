@@ -223,32 +223,34 @@ async def _handle_message(
     logger.info("[TelegramBot] Received message from %s: %s…", sender_label, text[:80])
 
     # ── Detección de modo: CONVERSACIÓN vs TRIAGE ───────────────────────────
-    # Si el mensaje tiene estructura de email (De:, Asunto:, etc.) → TRIAGE
-    # Si es una pregunta/conversación directa → CONVERSACIÓN
+    # LÓGICA: TODO es CONVERSACIÓN por defecto, excepto si es claramente un EMAIL
+    
+    # Detectar formato de email (headers explícitos)
     is_email_format = any(
         line.strip().lower().startswith(prefix)
         for line in text.split("\n")[:5]
-        for prefix in ("de:", "from:", "asunto:", "subject:")
+        for prefix in ("de:", "from:", "asunto:", "subject:", "fecha:", "date:")
     )
     
-    # Patrones conversacionales (preguntas directas, saludos)
-    conversational_patterns = [
-        "hola", "cómo estás", "como estas", "qué tal", "que tal",
-        "ayuda", "ayúdame", "ayudame", "explica", "cuéntame", "cuentame",
-        "nia", "necesito", "puedes", "podrías", "podrias",
+    # Palabras clave que indican intención de TRIAGE explícito
+    triage_keywords = [
+        "clasifica esto", "clasifica el siguiente", "analiza este email",
+        "triaje", "triage", "documenta esto", "es strategic", "es junk"
     ]
-    is_conversational = (
-        not is_email_format
-        and len(text.split()) < 50  # Menos de 50 palabras probablemente es conversación
-        and any(pattern in text.lower() for pattern in conversational_patterns)
-    )
-
-    # ── MODO CONVERSACIONAL ─────────────────────────────────────────────────
-    if is_conversational:
+    is_explicit_triage = any(keyword in text.lower() for keyword in triage_keywords)
+    
+    # Mensajes muy largos (>100 palabras) probablemente son emails sin headers
+    is_very_long = len(text.split()) > 100
+    
+    # DECISIÓN: Solo hacer TRIAGE si es email o solicitud explícita
+    should_triage = is_email_format or is_explicit_triage or is_very_long
+    
+    # ── MODO CONVERSACIONAL (por defecto) ──────────────────────────────────
+    if not should_triage:
         await _handle_conversation(update, context, text, sender_label)
         return
 
-    # ── MODO TRIAGE (email o mensaje largo estructurado) ───────────────────
+    # ── MODO TRIAGE (email o solicitud explícita) ──────────────────────────
     ack = await update.message.reply_text(
         "_Analizando tu mensaje…_",
         parse_mode=constants.ParseMode.MARKDOWN,
