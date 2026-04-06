@@ -739,34 +739,57 @@ class TriageCrew:
             
             # Limpiar bloques de razonamiento que Qwen3 emite antes del contenido real.
             # El modelo escribe un bloque de "thinking" en texto plano antes de la respuesta.
-            # Estrategia: buscar la primera línea que empiece con # o con texto en español
-            # o después de una línea en blanco que siga a texto de razonamiento en inglés.
+            # Estrategia: detectar patrones que indican el FIN del razonamiento y el INICIO
+            # del contenido útil (en español).
             import re
             
-            # Quitar bloques <think>...</think> si los hay
+            # Paso 1: Quitar bloques <think>...</think> si los hay
             cleaned = re.sub(r'<think>.*?</think>', '', result, flags=re.DOTALL).strip()
             if not cleaned:
                 cleaned = result
             
-            # Detectar si hay un bloque de razonamiento (párrafos en inglés con "Let me", "I need", etc.)
-            # seguido del contenido real en español
-            reasoning_end_patterns = [
-                r'\n\n#',         # Encabezado markdown después de línea en blanco
-                r'\n\n[A-ZÁÉÍÓÚ]', # Párrafo en mayúscula (español) después de razonamiento
-                r'\nPara ',        # Respuesta típica en español
-                r'\nExcelente',
-                r'\nLos sistemas',
-                r'\nEn el contexto',
+            # Paso 2: Detectar el final del razonamiento
+            # El razonamiento suele estar en inglés con frases como:
+            #   "Let me analyze...", "I need to...", "First, I'll...", etc.
+            # El contenido real empieza con:
+            #   - Texto en español capitalizado
+            #   - Respuesta directa a la pregunta
+            #   - Formato estructurado (listas, headers)
+            
+            # Patrones que indican el INICIO del contenido real (no del razonamiento)
+            content_start_patterns = [
+                # Headers markdown
+                (r'\n#+\s+[A-ZÁÉÍÓÚÑ]', 0),  # \n## Título
+                
+                # Párrafo en español después de salto de línea
+                (r'\n\n[A-ZÁÉÍÓÚÑ][a-záéíóúñ]{2,}', 0),  # \n\nLa respuesta es...
+                
+                # Inicio de oración típica en español (sin doble salto)
+                (r'\n(Para |La |El |Los |Las |En |Según |Descorcha |Nia |Basándome )', 0),
+                
+                # Respuestas directas
+                (r'\n(Sí[,\.]|No[,\.]|Claro[,\.]|Por supuesto[,\.])', 0),
+                
+                # Listas o enumeraciones
+                (r'\n\d+\.\s+[A-ZÁÉÍÓÚÑ]', 0),  # \n1. Item
+                (r'\n[-*]\s+[A-ZÁÉÍÓÚÑ]', 0),   # \n- Item
             ]
             
-            for pattern in reasoning_end_patterns:
+            best_match = None
+            best_pos = len(cleaned)  # Por defecto, el final (sin razonamiento detectado)
+            
+            for pattern, offset in content_start_patterns:
                 match = re.search(pattern, cleaned)
-                if match:
-                    candidate = cleaned[match.start():].strip()
-                    # Verificar que no sea solo otra línea de razonamiento
-                    if len(candidate) > 50:
-                        cleaned = candidate
-                        break
+                if match and match.start() < best_pos:
+                    best_pos = match.start() + offset
+                    best_match = pattern
+            
+            # Si encontramos contenido útil, cortar desde ahí
+            if best_match and best_pos < len(cleaned) * 0.8:  # No cortar si está muy al final
+                candidate = cleaned[best_pos:].strip()
+                if len(candidate) > 30:  # Mínimo 30 chars de contenido
+                    cleaned = candidate
+                    print(f"🔍 Razonamiento removido usando patrón: {best_match}")
             
             result = cleaned
             print(f"📥 RESPUESTA FINAL LIMPIA: '{result[:200]}'")
