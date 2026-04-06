@@ -503,22 +503,33 @@ class TriageCrew:
     # ------------------------------------------------------------------
     @staticmethod
     def _run_with_timeout(func, timeout_seconds: int = 120, **kwargs):
-        """Execute a function with timeout to prevent infinite loops in reasoning models."""
-        import signal
+        """Execute a function with timeout to prevent infinite loops in reasoning models.
         
-        def timeout_handler(signum, frame):
+        Uses threading instead of signal.SIGALRM to work in executor threads.
+        """
+        import threading
+        
+        result = [None]
+        exception = [None]
+        
+        def target():
+            try:
+                result[0] = func(**kwargs)
+            except Exception as exc:
+                exception[0] = exc
+        
+        thread = threading.Thread(target=target, daemon=True)
+        thread.start()
+        thread.join(timeout=timeout_seconds)
+        
+        if thread.is_alive():
+            # Thread still running after timeout
             raise TimeoutError(f"Function exceeded {timeout_seconds}s timeout")
         
-        # Set the signal handler and alarm
-        old_handler = signal.signal(signal.SIGALRM, timeout_handler)
-        signal.alarm(timeout_seconds)
+        if exception[0]:
+            raise exception[0]
         
-        try:
-            result = func(**kwargs)
-            signal.alarm(0)  # Disable the alarm
-            return result
-        finally:
-            signal.signal(signal.SIGALRM, old_handler)
+        return result[0]
 
     # ------------------------------------------------------------------
     def kickoff(self, email_entrante: str) -> TriageDecisionOutput:
