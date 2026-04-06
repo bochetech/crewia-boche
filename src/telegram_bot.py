@@ -62,12 +62,21 @@ logger = logging.getLogger(__name__)
 _WELCOME = """
 Hola, soy Nia.
 
-Soy la Analista Estratégica de Triaje de Descorcha. Envíame cualquier mensaje o correo y lo analizaré contra la estrategia corporativa.
+Soy la Analista Estratégica de Triaje de Descorcha. Trabajo en dos modos:
 
-*¿Qué puedes enviarme?*
-• Texto de un email (con De: y Asunto:)
-• Un mensaje directo sobre un tema estratégico
-• Una propuesta de proveedor, integración o servicio
+*Modo Conversación*
+Pregúntame sobre estrategia, procesos o cualquier duda que tengas.
+Ejemplos: "¿Cómo funciona el triage?", "Ayúdame con esto"
+
+*Modo Triage*
+Envíame emails completos para clasificarlos como STRATEGIC o JUNK.
+Formato:
+```
+De: remitente@empresa.com
+Asunto: Propuesta integración
+
+Cuerpo del email...
+```
 
 *Comandos disponibles:*
 /start — Este mensaje
@@ -75,7 +84,7 @@ Soy la Analista Estratégica de Triaje de Descorcha. Envíame cualquier mensaje 
 /status — Estado del inbox
 /miid — Tu chat_id
 
-Escribe tu mensaje y lo proceso en segundos.
+Conversa conmigo o envíame un email para analizar.
 """.strip()
 
 _HELP = """
@@ -184,7 +193,7 @@ async def _handle_message(
     update: Update,
     context: ContextTypes.DEFAULT_TYPE,
 ) -> None:
-    """Main handler: triage the incoming message and reply with the result."""
+    """Main handler: conversational AI or triage depending on message structure."""
     user = update.effective_user
     text = update.message.text or ""
 
@@ -195,20 +204,49 @@ async def _handle_message(
     sender_label = f"@{user.username}" if user.username else f"tg:{user.id}"
     logger.info("[TelegramBot] Received message from %s: %s…", sender_label, text[:80])
 
-    # Acknowledge immediately so the user knows processing started
+    # ── Detección de modo: CONVERSACIÓN vs TRIAGE ───────────────────────────
+    # Si el mensaje tiene estructura de email (De:, Asunto:, etc.) → TRIAGE
+    # Si es una pregunta/conversación directa → CONVERSACIÓN
+    is_email_format = any(
+        line.strip().lower().startswith(prefix)
+        for line in text.split("\n")[:5]
+        for prefix in ("de:", "from:", "asunto:", "subject:")
+    )
+    
+    # Patrones conversacionales (preguntas directas, saludos)
+    conversational_patterns = [
+        "hola", "cómo estás", "como estas", "qué tal", "que tal",
+        "ayuda", "ayúdame", "ayudame", "explica", "cuéntame", "cuentame",
+        "nia", "necesito", "puedes", "podrías", "podrias",
+    ]
+    is_conversational = (
+        not is_email_format
+        and len(text.split()) < 50  # Menos de 50 palabras probablemente es conversación
+        and any(pattern in text.lower() for pattern in conversational_patterns)
+    )
+
+    # ── MODO CONVERSACIONAL ─────────────────────────────────────────────────
+    if is_conversational:
+        await _handle_conversation(update, context, text, sender_label)
+        return
+
+    # ── MODO TRIAGE (email o mensaje largo estructurado) ───────────────────
     ack = await update.message.reply_text(
         "_Analizando tu mensaje…_",
         parse_mode=constants.ParseMode.MARKDOWN,
     )
 
     try:
-        # Format as standard triage input text
-        triage_text = (
-            f"De: {sender_label}\n"
-            f"Asunto: (mensaje de Telegram)\n"
-            f"Canal: telegram\n\n"
-            f"{text}"
-        )
+        # Format as standard triage input text (solo si no tiene headers ya)
+        if not is_email_format:
+            triage_text = (
+                f"De: {sender_label}\n"
+                f"Asunto: (mensaje de Telegram)\n"
+                f"Canal: telegram\n\n"
+                f"{text}"
+            )
+        else:
+            triage_text = text  # Ya tiene formato de email
 
         # Run in thread pool so the async event loop is not blocked
         crew: TriageCrew = context.bot_data["crew"]
@@ -226,6 +264,69 @@ async def _handle_message(
             f"Error procesando el mensaje:\n`{exc}`",
             parse_mode=constants.ParseMode.MARKDOWN,
         )
+
+
+async def _handle_conversation(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+    text: str,
+    sender_label: str,
+) -> None:
+    """Handle conversational messages (not triage requests)."""
+    # Respuestas conversacionales simples basadas en el contexto de Nia
+    text_lower = text.lower()
+    
+    if any(word in text_lower for word in ["hola", "holi", "buenas", "saludos"]):
+        response = (
+            "Hola! Soy Nia, tu Analista Estratégica de Triaje.\n\n"
+            "Puedo ayudarte de dos formas:\n"
+            "• *Conversación*: pregúntame sobre estrategia, procesos o cómo funciono\n"
+            "• *Triage*: envíame un email completo (con De: y Asunto:) para clasificarlo\n\n"
+            "¿En qué te puedo ayudar?"
+        )
+    elif any(word in text_lower for word in ["cómo estás", "como estas", "qué tal", "que tal"]):
+        response = (
+            "Funcionando perfectamente, gracias por preguntar.\n\n"
+            "Estoy monitoreando `niaboche@gmail.com` cada 60 segundos y lista para "
+            "clasificar cualquier mensaje que me envíes.\n\n"
+            "¿Tienes algún email que quieras que analice?"
+        )
+    elif "ayuda" in text_lower or "ayúdame" in text_lower or "ayudame" in text_lower:
+        response = (
+            "Claro, te ayudo.\n\n"
+            "*Para triage de emails:*\n"
+            "Envíame el texto completo del email con este formato:\n"
+            "```\nDe: remitente@ejemplo.com\nAsunto: Título del email\n\n"
+            "Cuerpo del mensaje...\n```\n\n"
+            "*Para conversación:*\n"
+            "Simplemente pregúntame lo que necesites saber sobre estrategia, "
+            "procesos de Descorcha o mi funcionamiento."
+        )
+    elif "nia" in text_lower and "?" in text:
+        response = (
+            "Soy Nia, Analista Estratégica de Triaje para Descorcha.\n\n"
+            "Mi trabajo es:\n"
+            "• Clasificar emails/mensajes como STRATEGIC o JUNK\n"
+            "• Documentar información relevante en Confluence\n"
+            "• Redactar borradores de respuesta cuando se necesita colaboración\n"
+            "• Notificar al líder técnico de decisiones importantes\n\n"
+            "Trabajo con una cascada de modelos:\n"
+            "1. LM Studio local (tu máquina)\n"
+            "2. Gemini (si local falla)\n"
+            "3. Clasificador determinístico (último recurso)"
+        )
+    else:
+        # Respuesta genérica para otras conversaciones
+        response = (
+            "Entiendo que quieres conversar, pero no estoy segura de cómo responder a eso específicamente.\n\n"
+            "Puedo ayudarte mejor si:\n"
+            "• Me envías un email completo para clasificar (De: / Asunto: / Cuerpo)\n"
+            "• Me preguntas sobre estrategia de Descorcha\n"
+            "• Me pides ayuda sobre cómo usar el sistema de triage\n\n"
+            "¿Qué prefieres?"
+        )
+    
+    await update.message.reply_text(response, parse_mode=constants.ParseMode.MARKDOWN)
 
 
 # ---------------------------------------------------------------------------
