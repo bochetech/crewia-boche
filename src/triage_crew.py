@@ -130,7 +130,8 @@ def _sanitize_reasoning_callback(step_output: Any) -> Any:
     1. Formato nativo LM Studio: output array con type="reasoning"|"message"
     2. Tags XML: <think>...</think>, <reasoning>...</reasoning>
     3. Comentarios HTML: <!-- thinking -->...<!-- /thinking -->
-    4. Preámbulos analíticos en texto plano (inglés) antes de contenido útil (español)
+    4. Preámbulos analíticos: "Let me craft...", "I need to...", etc.
+    5. Respuestas duplicadas: múltiples saludos o respuestas repetidas
     
     Args:
         step_output: Objeto CrewAI step output con atributo .output (string)
@@ -183,11 +184,27 @@ def _sanitize_reasoning_callback(step_output: Any) -> Any:
     
     # Paso 3: Detectar y remover preámbulos analíticos (razonamiento en texto plano)
     # El modelo puede escribir razonamiento visible antes del contenido útil.
-    # Buscamos patrones que indican el INICIO del contenido real.
+    
+    # Primero: remover frases típicas de "internal thinking" en inglés
+    thinking_phrases = [
+        r'Let me craft.*?answer:?\s*',
+        r'Let me think.*?\n',
+        r'I need to.*?\n',
+        r'First,?\s+I.*?\n',
+        r'My approach.*?\n',
+        r'I\'ll start.*?\n',
+        r'Internal reasoning:.*?\n',
+    ]
+    for phrase_pattern in thinking_phrases:
+        cleaned = re.sub(phrase_pattern, '', cleaned, flags=re.IGNORECASE)
+    
+    cleaned = cleaned.strip()
+    
+    # Segundo: buscar patrones que indican el INICIO del contenido real
     content_start_patterns = [
-        (r'\n#+\s+[A-ZÁÉÍÓÚÑ]', 0),          # \n## Título
-        (r'\n\n[A-ZÁÉÍÓÚÑ][a-záéíóúñ]{2,}', 0),  # \n\nLa respuesta...
-        (r'\n(Para |La |El |Los |Las |En |Según |Descorcha |Nia |Basándome )', 0),
+        (r'\n#+\s+[A-ZÁÉÍÓÚÑ¡]', 0),          # \n## Título o ¡Hola!
+        (r'\n\n[A-ZÁÉÍÓÚÑ¡][a-záéíóúñ]{2,}', 0),  # \n\nLa respuesta... o \n\n¡Hola!
+        (r'\n(Para |La |El |Los |Las |En |Según |Descorcha |Nia |Basándome |Hola|¡Hola)', 0),
         (r'\n(Sí[,\.]|No[,\.]|Claro[,\.]|Por supuesto[,\.])', 0),
         (r'\n\d+\.\s+[A-ZÁÉÍÓÚÑ]', 0),       # \n1. Item
         (r'\n[-*]\s+[A-ZÁÉÍÓÚÑ]', 0),        # \n- Item
@@ -207,6 +224,17 @@ def _sanitize_reasoning_callback(step_output: Any) -> Any:
         if len(candidate) > 30:
             cleaned = candidate
             logger.debug("Reasoning sanitizer: removed %d chars of preamble", len(original) - len(cleaned))
+    
+    # Paso 4: Eliminar respuestas duplicadas (el modelo a veces responde 2 veces)
+    # Si hay múltiples saludos/respuestas similares, quedarse con la última
+    lines = cleaned.split('\n')
+    # Detectar si hay múltiples "¡Hola!" o respuestas duplicadas
+    greeting_indices = [i for i, line in enumerate(lines) if line.strip().lower().startswith(('¡hola', 'hola!'))]
+    if len(greeting_indices) >= 2:
+        # Quedarse solo desde el último saludo en adelante
+        last_greeting_idx = greeting_indices[-1]
+        cleaned = '\n'.join(lines[last_greeting_idx:])
+        logger.debug("Reasoning sanitizer: removed duplicate responses, kept last greeting")
     
     step_output.output = cleaned
     return step_output
@@ -824,7 +852,8 @@ class TriageCrew:
             print(f"{'='*80}\n")
             
             # Extraer texto de la respuesta
-            # El callback _sanitize_reasoning_callback ya limpió el razonamiento
+            # El callback _sanitize_reasoning_callback ya limpió el razonamiento,
+            # pero por si acaso aplicamos una limpieza adicional post-crew
             result = ""
             if hasattr(raw, "raw"):
                 result = raw.raw.strip()
@@ -832,6 +861,54 @@ class TriageCrew:
             else:
                 result = str(raw).strip()
                 print(f"📥 EXTRAÍDO DE str(raw): '{result}'")
+            
+            # Limpieza post-callback (por si el callback no alcanzó a ejecutarse)
+            import re as _re
+            
+            # Estrategia agresiva: si el modelo empieza con razonamiento visible,
+            # buscar la ÚLTIMA aparición de un saludo o respuesta válida en español
+            # y descartar todo lo anterior
+            
+            # Buscar el último punto donde empieza contenido útil (saludo o respuesta)
+            useful_content_markers = [
+                r'¡Hola!',
+                r'Hola!',
+                r'Hola,',
+                r'\n\n[A-ZÁÉÍÓÚÑ][a-záéíóúñ]{3,}',  # Párrafo en español
+                r'\n#+\s+[A-ZÁÉÍÓÚÑ]',  # Header
+            ]
+            
+            last_useful_pos = -1
+            last_match_text = ""
+            
+            for marker in useful_content_markers:
+                matches = list(_re.finditer(marker, result))
+                if matches:
+                    # Tomar la ÚLTIMA ocurrencia (la respuesta final real)
+                    last_match = matches[-1]
+                    if last_match.start() > last_useful_pos:
+                        last_useful_pos = last_match.start()
+                        last_match_text = marker
+            
+            # Si encontramos contenido útil y hay mucho texto antes (>100 chars),
+            # es razonamiento — cortarlo
+            if last_useful_pos > 100:
+                result = result[last_useful_pos:].strip()
+                print(f"🧹 Eliminado razonamiento: {last_useful_pos} chars antes de '{last_match_text[:20]}'")
+            
+            # Limpieza adicional de frases de thinking que hayan quedado
+            thinking_phrases = [
+                r'Remember to follow.*?\n',
+                r'The following is.*?\n',
+                r'Current Task:.*?\n',
+                r'Looking at the instructions.*?\n',
+                r'I notice.*?\n',
+                r'Since.*?I should.*?\n',
+            ]
+            for phrase_pattern in thinking_phrases:
+                result = _re.sub(phrase_pattern, '', result, flags=_re.IGNORECASE)
+            
+            result = result.strip()
             
             if not result:
                 print("⚠️ RESPUESTA VACÍA - retornando mensaje de error")
