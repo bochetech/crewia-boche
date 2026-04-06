@@ -681,28 +681,36 @@ class TriageCrew:
             )
             
             # Ejecutar con timeout de la config
-            logger.info(f"📤 PROMPT ENVIADO:\n{task_description[:500]}...")
+            print(f"\n{'='*80}")
+            print(f"📤 PROMPT ENVIADO AL MODELO:")
+            print(f"{'='*80}")
+            print(task_description[:800])
+            print(f"{'='*80}\n")
             
             raw = self._run_with_timeout(
                 crew.kickoff,
                 timeout_seconds=timeout
             )
             
-            logger.info(f"📥 RESPUESTA RAW TYPE: {type(raw)}")
-            logger.info(f"📥 RESPUESTA RAW DIR: {dir(raw)}")
-            logger.info(f"📥 RESPUESTA RAW STR: {str(raw)[:500]}")
+            print(f"\n{'='*80}")
+            print(f"📥 RESPUESTA RAW DEL MODELO:")
+            print(f"{'='*80}")
+            print(f"TYPE: {type(raw)}")
+            print(f"HAS raw attr: {hasattr(raw, 'raw')}")
+            print(f"STR: {str(raw)[:800]}")
+            print(f"{'='*80}\n")
             
             # Extraer texto de la respuesta
             result = ""
             if hasattr(raw, "raw"):
                 result = raw.raw.strip()
-                logger.info(f"📥 RESPUESTA (raw.raw): '{result}'")
+                print(f"📥 EXTRAÍDO DE raw.raw: '{result[:200]}'")
             else:
                 result = str(raw).strip()
-                logger.info(f"📥 RESPUESTA (str): '{result}'")
+                print(f"📥 EXTRAÍDO DE str(raw): '{result[:200]}'")
             
             if not result:
-                logger.error("⚠️ RESPUESTA VACÍA - retornando mensaje de error")
+                print("⚠️ RESPUESTA VACÍA - retornando mensaje de error")
                 return "Lo siento, no pude generar una respuesta. ¿Puedes intentar de nuevo?"
             
             return result
