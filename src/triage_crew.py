@@ -146,7 +146,7 @@ def _build_local_llm(enable_reasoning: bool = True) -> Any:
             "base_url": base_url,
             "api_key": "lm-studio",
             "temperature": 0.7,
-            "max_tokens": 2000,
+            "max_tokens": 2000 if enable_reasoning else 500,  # Menos tokens en conversación
         }
         
         # Configurar reasoning según el contexto de uso
@@ -156,14 +156,16 @@ def _build_local_llm(enable_reasoning: bool = True) -> Any:
                 llm_config["extra_body"] = {
                     "reasoning_content": False,  # No incluir <think>
                     "stop": ["<think>", "</think>"],  # Detener si empieza
+                    "repeat_penalty": 1.1,  # Evitar repeticiones
+                    "top_p": 0.9,  # Nucleus sampling más conservador
                 }
-                logger.debug("LLM config: reasoning DISABLED (conversation mode)")
+                logger.debug("LLM config: reasoning DISABLED (conversation mode, max_tokens=500)")
             except Exception:
                 pass
         else:
             # TRIAGE: Permitir reasoning pero extraer solo respuesta final
             # El parser en _parse_crewai_output extraerá el JSON después de <think>
-            logger.debug("LLM config: reasoning ENABLED (triage mode)")
+            logger.debug("LLM config: reasoning ENABLED (triage mode, max_tokens=2000)")
         
         return LLM(**llm_config)
     except Exception as exc:
@@ -614,11 +616,19 @@ class TriageCrew:
         try:
             from crewai import Agent, Crew, Task  # type: ignore
             
-            # Agent con personalidad de Nia pero sin herramientas de triage
+            # Agent con personalidad REDUCIDA para conversación (no necesita todo el contexto de triage)
+            # Backstory minimalista para reducir tokens del prompt
+            conversation_backstory = (
+                "Soy Nia, Analista Estratégica de Triaje para Descorcha. "
+                "Ayudo a clasificar emails, documentar información relevante y "
+                "mantener conversaciones sobre estrategia de negocio. "
+                "Soy directa, analítica y me comunico de forma profesional pero cercana."
+            )
+            
             agent = Agent(
                 role="Nia — Asistente Conversacional",
-                goal="Responder preguntas y mantener conversaciones naturales",
-                backstory=self._agents_cfg.get("agents", {}).get("triage_analyst", {}).get("backstory", ""),
+                goal="Responder preguntas de forma natural y breve",
+                backstory=conversation_backstory,  # REDUCIDO — no usar backstory completo
                 llm=conversation_llm,
                 tools=[],  # Sin herramientas — solo conversación
                 verbose=False,
@@ -626,26 +636,22 @@ class TriageCrew:
                 allow_delegation=False,
             )
             
-            # Task de conversación simple
+            # Task de conversación simple y CONCISA
             context_str = ""
-            if conversation_history:
-                context_str = "\n\nContexto de la conversación previa:\n"
-                context_str += "\n".join([f"- {msg['role']}: {msg['content']}" for msg in conversation_history[-5:]])
+            if conversation_history and len(conversation_history) > 0:
+                # Solo últimos 3 mensajes para limitar tokens
+                recent = conversation_history[-3:]
+                context_str = "\n".join([f"{msg['role']}: {msg['content'][:100]}" for msg in recent])
+                context_str = f"\nContexto previo:\n{context_str}\n"
             
             task = Task(
-                description=f"""Responde de forma natural y conversacional al usuario.
-                
-Mensaje del usuario: {user_message}
+                description=f"""Responde brevemente al usuario.
+
+Mensaje: {user_message[:500]}
 {context_str}
 
-IMPORTANTE:
-- Responde DIRECTAMENTE en texto plano (no JSON)
-- Sé breve y clara (máximo 2-3 oraciones)
-- Usa un tono amigable y profesional
-- NO uses bloques de razonamiento (<think>, etc.)
-- Si te preguntan sobre triaje, ofrece ayuda pero no ejecutes triage aquí
-""",
-                expected_output="Respuesta conversacional en texto plano",
+Responde en 1-3 oraciones, tono amigable y profesional.""",
+                expected_output="Respuesta conversacional breve",
                 agent=agent,
             )
             

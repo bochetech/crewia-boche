@@ -88,6 +88,38 @@ than the context length. Try to load the model with a larger context length
 - ✅ **Con reasoning** (TRIAGE): `qwen3.5-9b`, `deepseek-r1` — análisis profundo, 30-60s
 - ✅ **Sin reasoning** (GENERAL): `qwen/qwen2.5-14b`, `mistral/mistral-7b-instruct` — rápido, 5-10s
 
+### ⚙️ Configuración de LM Studio (importante)
+
+Para evitar checkpoints excesivos y lentitud, configura en LM Studio:
+
+1. **Context Length** (Longitud de contexto):
+   - Mínimo: **8192** tokens (8K)
+   - Recomendado: **16384** tokens (16K) para modelos razonadores
+   - Ubicación: Settings → Advanced → Context Length
+
+2. **GPU Offload** (Capas en GPU):
+   - Máximo posible según tu VRAM
+   - Más capas = más rápido
+   - Ubicación: Model Settings → GPU Offload
+
+3. **Flash Attention** (si disponible):
+   - ✅ Habilitar para mejor rendimiento
+   - Reduce uso de memoria en contextos largos
+
+4. **KV Cache Type**:
+   - Preferir: **f16** (mejor rendimiento)
+   - Alternativa: **q8_0** (menos memoria)
+
+**Síntoma de problema**: Si ves en logs de LM Studio:
+```
+created context checkpoint 2 of 32 (pos_min = 8428, n_tokens = 8429)
+```
+→ Significa que el contexto está llegando al límite. Aumenta **Context Length** en Settings.
+
+**Optimización implementada en el código**:
+- Conversación: `max_tokens=500`, backstory reducido, historial limitado a 3 mensajes
+- Triage: `max_tokens=2000`, backstory completo, sin límite de contexto
+
 **Beneficio**: El mismo modelo puede servir ambas modalidades, optimizando recursos mientras obtiene análisis profundo cuando se necesita y respuestas rápidas para conversación.
 
 ## ⚙️ What's Included
