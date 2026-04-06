@@ -159,8 +159,9 @@ def _build_local_llm(enable_reasoning: bool = True) -> Any:
             # CONVERSACIÓN: Deshabilitar reasoning para respuestas rápidas
             try:
                 llm_config["extra_body"] = {
-                    "reasoning_content": False,  # No incluir <think>
-                    "stop": ["<think>", "</think>"],  # Solo cortar reasoning blocks
+                    "reasoning_content": False,   # OpenAI-compatible
+                    "enable_thinking": False,      # Qwen3 específico
+                    "thinking": {"type": "disabled"},  # Alternativa Qwen3
                     "repeat_penalty": 1.1,
                     "top_p": 0.9,
                     "min_p": 0.05,
