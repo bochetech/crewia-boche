@@ -115,6 +115,103 @@ def _build_llm(tier: str = "premium", api_key: Optional[str] = None) -> Any:
     return _StubLLM(model_name, api_key)
 
 
+# ---------------------------------------------------------------------------
+# Reasoning sanitizer callback for CrewAI
+# ---------------------------------------------------------------------------
+
+def _sanitize_reasoning_callback(step_output: Any) -> Any:
+    """CrewAI step_callback para limpiar razonamiento visible de modelos LLM.
+    
+    Se ejecuta después de cada step del agente (incluyendo llamadas LLM).
+    Intercepta la respuesta cruda y remueve bloques de razonamiento antes
+    de que lleguen al agente.
+    
+    Soporta:
+    1. Formato nativo LM Studio: output array con type="reasoning"|"message"
+    2. Tags XML: <think>...</think>, <reasoning>...</reasoning>
+    3. Comentarios HTML: <!-- thinking -->...<!-- /thinking -->
+    4. Preámbulos analíticos en texto plano (inglés) antes de contenido útil (español)
+    
+    Args:
+        step_output: Objeto CrewAI step output con atributo .output (string)
+    
+    Returns:
+        El mismo objeto modificado con .output limpio
+    """
+    import re
+    
+    if not hasattr(step_output, 'output') or not isinstance(step_output.output, str):
+        return step_output
+    
+    original = step_output.output
+    cleaned = original
+    
+    # Paso 0: Detectar formato nativo LM Studio (output array)
+    # Si litellm devolviera el JSON crudo del endpoint /api/v1/chat, extraer solo los mensajes
+    try:
+        # Intentar parsear como JSON para detectar estructura {"output": [...]}
+        if original.strip().startswith('{') and '"output"' in original:
+            data = json.loads(original)
+            if isinstance(data.get('output'), list):
+                # Extraer solo elementos con type="message"
+                messages = [
+                    item['content']
+                    for item in data['output']
+                    if isinstance(item, dict) and item.get('type') == 'message'
+                ]
+                if messages:
+                    cleaned = '\n\n'.join(messages)
+                    logger.debug("Reasoning sanitizer: extracted %d message(s) from LM Studio output array", len(messages))
+                    step_output.output = cleaned
+                    return step_output
+    except (json.JSONDecodeError, KeyError, TypeError):
+        pass  # No es formato LM Studio, continuar con otros métodos
+    
+    # Paso 1: Remover tags XML de razonamiento
+    cleaned = re.sub(r'<think>.*?</think>', '', cleaned, flags=re.DOTALL | re.IGNORECASE)
+    cleaned = re.sub(r'<reasoning>.*?</reasoning>', '', cleaned, flags=re.DOTALL | re.IGNORECASE)
+    
+    # Paso 2: Remover comentarios HTML de thinking
+    cleaned = re.sub(
+        r'<!--\s*thinking\s*-->.*?<!--\s*/thinking\s*-->',
+        '',
+        cleaned,
+        flags=re.DOTALL | re.IGNORECASE
+    )
+    
+    cleaned = cleaned.strip()
+    
+    # Paso 3: Detectar y remover preámbulos analíticos (razonamiento en texto plano)
+    # El modelo puede escribir razonamiento visible antes del contenido útil.
+    # Buscamos patrones que indican el INICIO del contenido real.
+    content_start_patterns = [
+        (r'\n#+\s+[A-ZÁÉÍÓÚÑ]', 0),          # \n## Título
+        (r'\n\n[A-ZÁÉÍÓÚÑ][a-záéíóúñ]{2,}', 0),  # \n\nLa respuesta...
+        (r'\n(Para |La |El |Los |Las |En |Según |Descorcha |Nia |Basándome )', 0),
+        (r'\n(Sí[,\.]|No[,\.]|Claro[,\.]|Por supuesto[,\.])', 0),
+        (r'\n\d+\.\s+[A-ZÁÉÍÓÚÑ]', 0),       # \n1. Item
+        (r'\n[-*]\s+[A-ZÁÉÍÓÚÑ]', 0),        # \n- Item
+        (r'\n\{', 0),                         # \n{ (JSON response)
+    ]
+    
+    best_pos = len(cleaned)
+    for pattern, offset in content_start_patterns:
+        match = re.search(pattern, cleaned)
+        if match and match.start() < best_pos:
+            best_pos = match.start() + offset
+    
+    # Si encontramos un punto de corte temprano (primeros 80% del texto)
+    # y el contenido restante es sustancial (>30 chars), aplicar el corte
+    if best_pos < len(cleaned) * 0.8:
+        candidate = cleaned[best_pos:].strip()
+        if len(candidate) > 30:
+            cleaned = candidate
+            logger.debug("Reasoning sanitizer: removed %d chars of preamble", len(original) - len(cleaned))
+    
+    step_output.output = cleaned
+    return step_output
+
+
 def _build_local_llm(enable_reasoning: bool = True) -> Any:
     """Build an LLM pointing to the local LM Studio server.
 
@@ -516,6 +613,7 @@ class TriageCrew:
                 tasks=[task],
                 verbose=True,
                 max_rpm=10,  # Rate limit: máximo 10 requests por minuto al LLM
+                step_callback=_sanitize_reasoning_callback,  # Limpiar razonamiento automáticamente
             )
         except Exception as exc:
             logger.debug("crewai crew build failed: %s", exc)
@@ -696,6 +794,7 @@ class TriageCrew:
                 agents=[agent],
                 tasks=[task],
                 verbose=False,
+                step_callback=_sanitize_reasoning_callback,  # Limpiar razonamiento automáticamente
             )
             
             # Ejecutar con timeout de la config
@@ -725,6 +824,7 @@ class TriageCrew:
             print(f"{'='*80}\n")
             
             # Extraer texto de la respuesta
+            # El callback _sanitize_reasoning_callback ya limpió el razonamiento
             result = ""
             if hasattr(raw, "raw"):
                 result = raw.raw.strip()
@@ -737,62 +837,7 @@ class TriageCrew:
                 print("⚠️ RESPUESTA VACÍA - retornando mensaje de error")
                 return "Lo siento, no pude generar una respuesta. ¿Puedes intentar de nuevo?"
             
-            # Limpiar bloques de razonamiento que Qwen3 emite antes del contenido real.
-            # El modelo escribe un bloque de "thinking" en texto plano antes de la respuesta.
-            # Estrategia: detectar patrones que indican el FIN del razonamiento y el INICIO
-            # del contenido útil (en español).
-            import re
-            
-            # Paso 1: Quitar bloques <think>...</think> si los hay
-            cleaned = re.sub(r'<think>.*?</think>', '', result, flags=re.DOTALL).strip()
-            if not cleaned:
-                cleaned = result
-            
-            # Paso 2: Detectar el final del razonamiento
-            # El razonamiento suele estar en inglés con frases como:
-            #   "Let me analyze...", "I need to...", "First, I'll...", etc.
-            # El contenido real empieza con:
-            #   - Texto en español capitalizado
-            #   - Respuesta directa a la pregunta
-            #   - Formato estructurado (listas, headers)
-            
-            # Patrones que indican el INICIO del contenido real (no del razonamiento)
-            content_start_patterns = [
-                # Headers markdown
-                (r'\n#+\s+[A-ZÁÉÍÓÚÑ]', 0),  # \n## Título
-                
-                # Párrafo en español después de salto de línea
-                (r'\n\n[A-ZÁÉÍÓÚÑ][a-záéíóúñ]{2,}', 0),  # \n\nLa respuesta es...
-                
-                # Inicio de oración típica en español (sin doble salto)
-                (r'\n(Para |La |El |Los |Las |En |Según |Descorcha |Nia |Basándome )', 0),
-                
-                # Respuestas directas
-                (r'\n(Sí[,\.]|No[,\.]|Claro[,\.]|Por supuesto[,\.])', 0),
-                
-                # Listas o enumeraciones
-                (r'\n\d+\.\s+[A-ZÁÉÍÓÚÑ]', 0),  # \n1. Item
-                (r'\n[-*]\s+[A-ZÁÉÍÓÚÑ]', 0),   # \n- Item
-            ]
-            
-            best_match = None
-            best_pos = len(cleaned)  # Por defecto, el final (sin razonamiento detectado)
-            
-            for pattern, offset in content_start_patterns:
-                match = re.search(pattern, cleaned)
-                if match and match.start() < best_pos:
-                    best_pos = match.start() + offset
-                    best_match = pattern
-            
-            # Si encontramos contenido útil, cortar desde ahí
-            if best_match and best_pos < len(cleaned) * 0.8:  # No cortar si está muy al final
-                candidate = cleaned[best_pos:].strip()
-                if len(candidate) > 30:  # Mínimo 30 chars de contenido
-                    cleaned = candidate
-                    print(f"🔍 Razonamiento removido usando patrón: {best_match}")
-            
-            result = cleaned
-            print(f"📥 RESPUESTA FINAL LIMPIA: '{result[:200]}'")
+            print(f"📥 RESPUESTA FINAL: '{result[:200]}'")
             return result
             
         except TimeoutError:
