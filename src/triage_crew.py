@@ -146,7 +146,7 @@ def _build_local_llm(enable_reasoning: bool = True) -> Any:
             "base_url": base_url,
             "api_key": "lm-studio",
             "temperature": 0.7,
-            "max_tokens": 2000 if enable_reasoning else 500,  # Menos tokens en conversación
+            "max_tokens": 2000 if enable_reasoning else 200,  # 200 tokens para conversación
         }
         
         # Configurar reasoning según el contexto de uso
@@ -155,9 +155,10 @@ def _build_local_llm(enable_reasoning: bool = True) -> Any:
             try:
                 llm_config["extra_body"] = {
                     "reasoning_content": False,  # No incluir <think>
-                    "stop": ["<think>", "</think>"],  # Detener si empieza
+                    "stop": ["<think>", "</think>", "\n\n", "Usuario:", "Contexto:"],  # Detener temprano
                     "repeat_penalty": 1.1,  # Evitar repeticiones
                     "top_p": 0.9,  # Nucleus sampling más conservador
+                    "min_p": 0.05,  # Nucleus mínimo
                 }
                 logger.debug("LLM config: reasoning DISABLED (conversation mode, max_tokens=500)")
             except Exception:

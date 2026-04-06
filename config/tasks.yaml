@@ -8,9 +8,9 @@ tasks:
     # Configuración de LLM para esta tarea
     llm_config:
       enable_reasoning: false  # Sin <think> blocks para respuestas rápidas
-      max_tokens: 500          # Respuestas breves
+      max_tokens: 200          # Respuestas MUY breves (1-2 oraciones)
       temperature: 0.7         # Algo de creatividad
-      timeout: 30              # 30 segundos máximo
+      timeout: 60              # 60 segundos (30s era muy poco para qwen3.5-9b)
     description: |
       Soy Nia, Analista Estratégica de Triaje. En esta tarea ayudo al usuario
       a desarrollar ideas, responder preguntas y construir contexto para 
