@@ -5,6 +5,37 @@ application that manages multiple Google Gemini models (tiers) with a focus
 on token optimization, clear separation of concerns, and structured outputs
 ready for microservice integration.
 
+## 🤖 LLM Cascade Strategy
+
+Nia (el agente de triage) usa una cascada de 3 niveles:
+
+1. **LM Studio (primario)** — Modelo local que ejecutas en tu máquina
+   - Sin límites de cuota
+   - Privacidad total (no sale de tu red)
+   - Recomendado: modelos 7B-14B con contexto >= 8K tokens
+   - Ejemplos: `qwen/qwen2.5-14b`, `mistral/mistral-7b-instruct`
+   
+2. **Gemini (fallback)** — API de Google AI Studio
+   - Usa cuando el modelo local no está disponible o falla
+   - Free tier: 20 requests/día con `gemini-2.5-flash`
+   
+3. **Stub determinístico (último recurso)**
+   - Clasificador basado en keywords cuando ambos LLMs fallan
+   - Útil para tests y desarrollo offline
+
+### ⚠️ Problema común: contexto insuficiente
+
+Si ves este error:
+```
+WARNING: The number of tokens to keep from the initial prompt is greater 
+than the context length. Try to load the model with a larger context length
+```
+
+**Solución**: En LM Studio, carga un modelo con más contexto:
+- `gemma-3-1b` → contexto pequeño (4K), no recomendado para producción
+- `qwen/qwen2.5-14b` → contexto 32K, excelente balance
+- `mistral/mistral-7b-instruct` → contexto 32K, rápido
+
 ## ⚙️ What's Included
 
 - `.env.example` — example environment variables

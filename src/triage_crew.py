@@ -6,6 +6,12 @@ This module contains:
 - TriageCrew              : Orchestrates the triage_analyst agent + triage_email task
                             wired with the three custom output tools and two input
                             source tools (EmailInboxTool, ChatMessageInboxTool).
+                            
+                            LLM cascade (in order):
+                              1. Local LM Studio (primary)
+                              2. Gemini (fallback si local falla)
+                              3. Stub determinístico (fallback final)
+                            
 - run_triage(email)       : Convenience function for a single email text.
 - run_triage_from_inboxes(): Poll both inboxes and triage every pending message.
 
@@ -476,26 +482,34 @@ class TriageCrew:
         if not email_entrante or not email_entrante.strip():
             raise ValueError("email_entrante must be a non-empty string")
 
-        # ── Tier 1: Gemini (primary) ────────────────────────────────────────
+        # ── Tier 1: Local LM Studio (primary) ───────────────────────────────
+        # El modelo local es el motor principal de Nia. Solo recurre a Gemini
+        # si falla (ej: contexto demasiado largo) o si no está disponible.
+        if self._local_crew is not None:
+            try:
+                logger.info("Running triage with local LLM (LM Studio — primary)…")
+                raw = self._local_crew.kickoff(inputs={"email_entrante": email_entrante})
+                return self._parse_crewai_output(raw, email_entrante)
+            except Exception as exc:
+                # Si es un error de contexto demasiado largo, intentamos Gemini
+                is_context_error = "context length" in str(exc).lower() or "400" in str(exc)
+                if is_context_error:
+                    logger.warning("Local LLM context overflow; trying Gemini fallback…")
+                else:
+                    logger.warning("Local LLM kickoff failed (%s); trying Gemini fallback…", exc)
+
+        # ── Tier 2: Gemini (fallback) ───────────────────────────────────────
         if self._crew is not None:
             try:
+                logger.info("Running triage with Gemini (fallback)…")
                 raw = self._crew.kickoff(inputs={"email_entrante": email_entrante})
                 return self._parse_crewai_output(raw, email_entrante)
             except Exception as exc:
                 is_quota = "429" in str(exc) or "RESOURCE_EXHAUSTED" in str(exc)
                 if is_quota:
-                    logger.warning("Gemini quota exhausted (429); trying local LLM fallback…")
+                    logger.warning("Gemini quota exhausted (429); falling back to stub")
                 else:
-                    logger.warning("Gemini kickoff failed (%s); trying local LLM fallback…", exc)
-
-        # ── Tier 2: Local LM Studio ─────────────────────────────────────────
-        if self._local_crew is not None:
-            try:
-                logger.info("Running triage with local LLM (LM Studio)…")
-                raw = self._local_crew.kickoff(inputs={"email_entrante": email_entrante})
-                return self._parse_crewai_output(raw, email_entrante)
-            except Exception as exc:
-                logger.warning("Local LLM kickoff failed (%s); falling back to stub", exc)
+                    logger.warning("Gemini kickoff failed (%s); falling back to stub", exc)
 
         # ── Tier 3: Deterministic stub ──────────────────────────────────────
         logger.warning("All LLMs unavailable — using deterministic stub pipeline")
