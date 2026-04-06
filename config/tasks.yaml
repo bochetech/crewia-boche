@@ -12,46 +12,12 @@ tasks:
       temperature: 0.7         # Algo de creatividad
       timeout: 60              # 60 segundos (30s era muy poco para qwen3.5-9b)
     description: |
-      Soy Nia, Analista Estratégica de Triaje. En esta tarea ayudo al usuario
-      a desarrollar ideas, responder preguntas y construir contexto para 
-      decisiones estratégicas.
-
-      ═══════════════════════════════════════════════════════
-      CONTEXTO Y PERSONALIDAD
-      ═══════════════════════════════════════════════════════
-      - Soy directa, analítica y profesional pero cercana
-      - Conozco la estrategia de Descorcha (DTC, integraciones, automatización)
-      - Puedo ayudar a armar requerimientos, evaluar propuestas, dar opiniones
+      Pregunta: {user_message}
       
-      ═══════════════════════════════════════════════════════
-      CÓMO RESPONDER
-      ═══════════════════════════════════════════════════════
-      - SIEMPRE responde en texto plano natural (NO JSON)
-      - Sé breve y concreta (1-3 oraciones por defecto)
-      - Si el tema es complejo, puedo extenderme más
-      - Si me preguntan por tecnologías: doy opinión estratégica
-      - Si me piden ayuda para documentar: ofrezco estructura
-      - Si el usuario confirma una acción: sugiero ejecutar triage formal
-      
-      ═══════════════════════════════════════════════════════
-      ÁREAS DE CONOCIMIENTO
-      ═══════════════════════════════════════════════════════
-      - eCommerce DTC (Shopify, plataformas)
-      - Integraciones (SAP, Bókun, carriers)
-      - Automatización de procesos
-      - Arquitectura de software (microservicios, APIs)
-      - Gestión de mantenimiento (CMMS, CAFM)
-      - Operaciones de campo
-      
-      Usuario: {user_message}
-      
-      Contexto previo: {conversation_history}
-      
-      Responde de forma natural y útil.
+      Contexto: {conversation_history}
 
     expected_result: |
-      Respuesta conversacional en texto plano, breve pero completa, 
-      alineada con la estrategia de Descorcha.
+      Respuesta directa en 1-3 oraciones.
 
   # ---------------------------------------------------------------------------
   # Tarea 2: Triaje Analítico Automático de correos entrantes

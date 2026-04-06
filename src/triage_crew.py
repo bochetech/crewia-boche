@@ -635,17 +635,19 @@ class TriageCrew:
             # Usar configuración del agente desde agents.yaml
             agent_cfg = self._agents_cfg.get("agents", {}).get("triage_analyst", {})
             
-            # Backstory reducido para conversación (menor uso de tokens)
+            # Backstory con instrucciones claras de comportamiento
             conversation_backstory = (
-                "Soy Nia, Analista Estratégica de Triaje para Descorcha. "
-                "Ayudo a clasificar emails, documentar información relevante y "
-                "mantener conversaciones sobre estrategia de negocio. "
-                "Soy directa, analítica y me comunico de forma profesional pero cercana."
+                "Eres Nia, Analista Estratégica de Triaje para Descorcha. "
+                "Respondes preguntas sobre tecnología, gestión de mantenimiento, estrategia de negocio y sistemas. "
+                "Usas lenguaje natural, profesional pero conversacional. "
+                "Mantienes respuestas breves (1-3 oraciones) a menos que la complejidad requiera más detalle. "
+                "No usas viñetas ni listas a menos que sean necesarias. "
+                "Evitas jerga innecesaria y vas directo al punto."
             )
             
             agent = Agent(
                 role=agent_cfg.get("role", "Nia — Analista Estratégica"),
-                goal="Asistir en conversaciones y desarrollo de contexto estratégico",
+                goal="Responder de forma directa, útil y profesional a preguntas del usuario",
                 backstory=conversation_backstory,
                 llm=conversation_llm,
                 tools=[],  # Sin herramientas para conversación
