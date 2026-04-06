@@ -83,18 +83,23 @@ Cuerpo del email...
 /help  — Ayuda
 /status — Estado del inbox
 /miid — Tu chat_id
+/nueva — Limpiar contexto y empezar conversación nueva
 
 Conversa conmigo o envíame un email para analizar.
+Recuerdo el contexto durante 10 minutos.
 """.strip()
 
 _HELP = """
 *Nia — Analista Estratégica de Triaje*
 
-Envíame cualquier mensaje de texto y lo clasificaré como:
-• *STRATEGIC* — Relevante para la estrategia Descorcha. Lo documento en Confluence, redacto un borrador de seguimiento y notifico al líder.
-• *JUNK* — Spam o sin alineación estratégica. Lo descarto y notifico al líder.
+*Modo Conversación:*
+Pregúntame lo que quieras. Mantengo contexto de los últimos 10 mensajes.
+• "¿Qué opinas de Shopify?"
+• "Ayúdame a decidir si esto es estratégico"
+Cuando quieras que formalice algo, responde: *'Sí'* o *'Hazlo'*
 
-*Formato sugerido para emails:*
+*Modo Triage (emails):*
+Envíame el email completo y lo clasifico como STRATEGIC o JUNK.
 ```
 De: proveedor@empresa.com
 Asunto: Propuesta integración Shopify
@@ -107,6 +112,9 @@ Cuerpo del mensaje...
 /help   — Esta ayuda
 /status — Mensajes pendientes en el inbox
 /miid   — Obtener tu chat_id
+/nueva  — Limpiar contexto de conversación
+
+*Nota:* El contexto se limpia automáticamente después de 10 minutos de inactividad.
 """.strip()
 
 
@@ -172,6 +180,16 @@ async def _cmd_status(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         f"  📧 Email: {email_pending} pendiente(s) | cuenta: {imap_status}\n"
         f"  💬 Chat:  {chat_pending} pendiente(s)",
         parse_mode=constants.ParseMode.MARKDOWN,
+    )
+
+
+async def _cmd_nueva(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Clear conversation context and start fresh."""
+    context.user_data["conversation_history"] = []
+    context.user_data.pop("last_message_time", None)
+    await update.message.reply_text(
+        "Listo, contexto limpiado. Empezamos de cero.\n\n¿En qué te puedo ayudar?",
+        parse_mode=constants.ParseMode.MARKDOWN
     )
 
 
@@ -272,17 +290,42 @@ async def _handle_conversation(
     text: str,
     sender_label: str,
 ) -> None:
-    """Handle conversational messages with context memory."""
+    """Handle conversational messages with context memory and automatic cleanup."""
+    import time
+    
     text_lower = text.lower()
     
     # Inicializar historial de conversación si no existe
     if "conversation_history" not in context.user_data:
         context.user_data["conversation_history"] = []
+        context.user_data["last_message_time"] = time.time()
+    
+    # ── Auto-limpieza: timeout de 10 minutos ────────────────────────────────
+    current_time = time.time()
+    last_message_time = context.user_data.get("last_message_time", current_time)
+    time_since_last = current_time - last_message_time
+    
+    # Si pasaron más de 10 minutos, limpiar contexto
+    if time_since_last > 600:  # 600 segundos = 10 minutos
+        context.user_data["conversation_history"] = []
+        logger.info("[Conversación] Historial limpiado por timeout (%.1f min)", time_since_last / 60)
+    
+    context.user_data["last_message_time"] = current_time
+    
+    # ── Comando explícito de limpieza ───────────────────────────────────────
+    if text_lower in ["nueva conversación", "nueva", "limpiar", "reset", "reiniciar"]:
+        context.user_data["conversation_history"] = []
+        await update.message.reply_text(
+            "Listo, contexto limpiado. Empezamos de cero.\n\n¿En qué te puedo ayudar?",
+            parse_mode=constants.ParseMode.MARKDOWN
+        )
+        return
     
     # Agregar mensaje del usuario al historial
     context.user_data["conversation_history"].append({
         "role": "user",
-        "content": text
+        "content": text,
+        "timestamp": current_time
     })
     
     # Limitar historial a últimos 10 mensajes (5 intercambios)
@@ -444,6 +487,7 @@ def build_application(token: str) -> Application:
     app.add_handler(CommandHandler("help",   _cmd_help))
     app.add_handler(CommandHandler("status", _cmd_status))
     app.add_handler(CommandHandler("miid",   _cmd_miid))
+    app.add_handler(CommandHandler("nueva",  _cmd_nueva))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, _handle_message))
 
     # ── Email watcher (background task) ────────────────────────────────────
