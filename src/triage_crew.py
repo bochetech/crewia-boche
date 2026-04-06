@@ -444,6 +444,8 @@ class TriageCrew:
                 llm=llm,
                 tools=self._tools,
                 verbose=True,
+                max_iter=3,  # Máximo 3 iteraciones — evita loops infinitos en reasoning models
+                allow_delegation=False,  # No delegar tareas — evita conversaciones multi-agente
             )
 
             task_cfg = next(
@@ -463,10 +465,35 @@ class TriageCrew:
                 task_kwargs["output_pydantic"] = TriageDecisionOutput
 
             task = Task(**task_kwargs)
-            return Crew(agents=[agent], tasks=[task], verbose=True)
+            return Crew(
+                agents=[agent],
+                tasks=[task],
+                verbose=True,
+                max_rpm=10,  # Rate limit: máximo 10 requests por minuto al LLM
+            )
         except Exception as exc:
             logger.debug("crewai crew build failed: %s", exc)
             return None
+
+    # ------------------------------------------------------------------
+    @staticmethod
+    def _run_with_timeout(func, timeout_seconds: int = 120, **kwargs):
+        """Execute a function with timeout to prevent infinite loops in reasoning models."""
+        import signal
+        
+        def timeout_handler(signum, frame):
+            raise TimeoutError(f"Function exceeded {timeout_seconds}s timeout")
+        
+        # Set the signal handler and alarm
+        old_handler = signal.signal(signal.SIGALRM, timeout_handler)
+        signal.alarm(timeout_seconds)
+        
+        try:
+            result = func(**kwargs)
+            signal.alarm(0)  # Disable the alarm
+            return result
+        finally:
+            signal.signal(signal.SIGALRM, old_handler)
 
     # ------------------------------------------------------------------
     def kickoff(self, email_entrante: str) -> TriageDecisionOutput:
@@ -488,8 +515,14 @@ class TriageCrew:
         if self._local_crew is not None:
             try:
                 logger.info("Running triage with local LLM (LM Studio — primary)…")
-                raw = self._local_crew.kickoff(inputs={"email_entrante": email_entrante})
+                raw = self._run_with_timeout(
+                    self._local_crew.kickoff,
+                    inputs={"email_entrante": email_entrante},
+                    timeout_seconds=120  # 2 minutos máximo
+                )
                 return self._parse_crewai_output(raw, email_entrante)
+            except TimeoutError:
+                logger.warning("Local LLM timeout (120s) — reasoning model loop detected; trying Gemini fallback…")
             except Exception as exc:
                 # Si es un error de contexto demasiado largo, intentamos Gemini
                 is_context_error = "context length" in str(exc).lower() or "400" in str(exc)
@@ -502,8 +535,14 @@ class TriageCrew:
         if self._crew is not None:
             try:
                 logger.info("Running triage with Gemini (fallback)…")
-                raw = self._crew.kickoff(inputs={"email_entrante": email_entrante})
+                raw = self._run_with_timeout(
+                    self._crew.kickoff,
+                    inputs={"email_entrante": email_entrante},
+                    timeout_seconds=60  # 1 minuto máximo para Gemini
+                )
                 return self._parse_crewai_output(raw, email_entrante)
+            except TimeoutError:
+                logger.warning("Gemini timeout (60s); falling back to stub")
             except Exception as exc:
                 is_quota = "429" in str(exc) or "RESOURCE_EXHAUSTED" in str(exc)
                 if is_quota:
