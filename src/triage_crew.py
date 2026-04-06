@@ -160,10 +160,10 @@ def _build_local_llm(enable_reasoning: bool = True) -> Any:
             try:
                 llm_config["extra_body"] = {
                     "reasoning_content": False,  # No incluir <think>
-                    "stop": ["<think>", "</think>", "\n\n", "Usuario:", "Contexto:"],  # Detener temprano
-                    "repeat_penalty": 1.1,  # Evitar repeticiones
-                    "top_p": 0.9,  # Nucleus sampling más conservador
-                    "min_p": 0.05,  # Nucleus mínimo
+                    "stop": ["<think>", "</think>"],  # Solo cortar reasoning blocks
+                    "repeat_penalty": 1.1,
+                    "top_p": 0.9,
+                    "min_p": 0.05,
                 }
                 logger.info("🔧 LLM config (CONVERSACIÓN): reasoning=False, max_tokens=200, stop sequences activas")
             except Exception:
