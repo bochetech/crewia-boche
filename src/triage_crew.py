@@ -688,12 +688,24 @@ class TriageCrew:
                 timeout_seconds=timeout
             )
             
-            logger.info(f"📥 RESPUESTA RECIBIDA:\n{str(raw)[:500]}...")
+            logger.info(f"📥 RESPUESTA RAW TYPE: {type(raw)}")
+            logger.info(f"📥 RESPUESTA RAW DIR: {dir(raw)}")
+            logger.info(f"📥 RESPUESTA RAW STR: {str(raw)[:500]}")
             
             # Extraer texto de la respuesta
+            result = ""
             if hasattr(raw, "raw"):
-                return raw.raw.strip()
-            return str(raw).strip()
+                result = raw.raw.strip()
+                logger.info(f"📥 RESPUESTA (raw.raw): '{result}'")
+            else:
+                result = str(raw).strip()
+                logger.info(f"📥 RESPUESTA (str): '{result}'")
+            
+            if not result:
+                logger.error("⚠️ RESPUESTA VACÍA - retornando mensaje de error")
+                return "Lo siento, no pude generar una respuesta. ¿Puedes intentar de nuevo?"
+            
+            return result
             
         except TimeoutError:
             return "Disculpa, tardé demasiado en responder. ¿Puedes reformular tu pregunta?"
