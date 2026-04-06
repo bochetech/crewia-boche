@@ -680,9 +680,13 @@ class TriageCrew:
             
             # Ejecutar con timeout de la config
             print(f"\n{'='*80}")
-            print(f"📤 PROMPT ENVIADO AL MODELO:")
+            print(f"📤 PROMPT COMPLETO ENVIADO AL MODELO:")
             print(f"{'='*80}")
-            print(task_description[:800])
+            print(f"TASK DESCRIPTION:\n{task_description}")
+            print(f"\nTASK EXPECTED OUTPUT:\n{task_expected}")
+            print(f"\nAGENT ROLE: {agent.role}")
+            print(f"AGENT GOAL: {agent.goal}")
+            print(f"AGENT BACKSTORY: {agent.backstory}")
             print(f"{'='*80}\n")
             
             raw = self._run_with_timeout(
@@ -691,21 +695,23 @@ class TriageCrew:
             )
             
             print(f"\n{'='*80}")
-            print(f"📥 RESPUESTA RAW DEL MODELO:")
+            print(f"📥 RESPUESTA COMPLETA DEL MODELO:")
             print(f"{'='*80}")
             print(f"TYPE: {type(raw)}")
             print(f"HAS raw attr: {hasattr(raw, 'raw')}")
-            print(f"STR: {str(raw)[:800]}")
+            print(f"STR COMPLETO:\n{str(raw)}")
+            if hasattr(raw, 'raw'):
+                print(f"\nraw.raw COMPLETO:\n{raw.raw}")
             print(f"{'='*80}\n")
             
             # Extraer texto de la respuesta
             result = ""
             if hasattr(raw, "raw"):
                 result = raw.raw.strip()
-                print(f"📥 EXTRAÍDO DE raw.raw: '{result[:200]}'")
+                print(f"📥 EXTRAÍDO DE raw.raw: '{result}'")
             else:
                 result = str(raw).strip()
-                print(f"📥 EXTRAÍDO DE str(raw): '{result[:200]}'")
+                print(f"📥 EXTRAÍDO DE str(raw): '{result}'")
             
             if not result:
                 print("⚠️ RESPUESTA VACÍA - retornando mensaje de error")
