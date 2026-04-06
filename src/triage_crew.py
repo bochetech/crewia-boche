@@ -147,6 +147,7 @@ def _build_local_llm(enable_reasoning: bool = True) -> Any:
             "api_key": "lm-studio",
             "temperature": 0.7,
             "max_tokens": 2000 if enable_reasoning else 200,  # 200 tokens para conversación
+            "verbose": True,  # HABILITAR LOGS
         }
         
         # Configurar reasoning según el contexto de uso
@@ -160,13 +161,13 @@ def _build_local_llm(enable_reasoning: bool = True) -> Any:
                     "top_p": 0.9,  # Nucleus sampling más conservador
                     "min_p": 0.05,  # Nucleus mínimo
                 }
-                logger.debug("LLM config: reasoning DISABLED (conversation mode, max_tokens=500)")
+                logger.info("🔧 LLM config (CONVERSACIÓN): reasoning=False, max_tokens=200, stop sequences activas")
             except Exception:
                 pass
         else:
             # TRIAGE: Permitir reasoning pero extraer solo respuesta final
             # El parser en _parse_crewai_output extraerá el JSON después de <think>
-            logger.debug("LLM config: reasoning ENABLED (triage mode, max_tokens=2000)")
+            logger.info("🔧 LLM config (TRIAGE): reasoning=True, max_tokens=2000")
         
         return LLM(**llm_config)
     except Exception as exc:
@@ -680,10 +681,14 @@ class TriageCrew:
             )
             
             # Ejecutar con timeout de la config
+            logger.info(f"📤 PROMPT ENVIADO:\n{task_description[:500]}...")
+            
             raw = self._run_with_timeout(
                 crew.kickoff,
                 timeout_seconds=timeout
             )
+            
+            logger.info(f"📥 RESPUESTA RECIBIDA:\n{str(raw)[:500]}...")
             
             # Extraer texto de la respuesta
             if hasattr(raw, "raw"):
