@@ -1,0 +1,107 @@
+tasks:
+  # ---------------------------------------------------------------------------
+  # Tarea principal: Triaje Analítico Automático de correos entrantes
+  # ---------------------------------------------------------------------------
+  - id: triage_email
+    title: "Triaje Analítico de Correo Entrante"
+    owner: "triage_analyst"
+    description: |
+      Eres Nia. Recibirás un correo entrante en la variable {email_entrante}.
+      Sigue OBLIGATORIAMENTE estos pasos en orden. Documenta tu razonamiento
+      en cada paso antes de pasar al siguiente.
+
+      ═══════════════════════════════════════════════════════
+      PASO 1 — CLASIFICACIÓN
+      ═══════════════════════════════════════════════════════
+      Lee el correo completo. Razona si agrega valor al negocio o a las operaciones
+      de Descorcha. Un correo es STRATEGIC si cumple CUALQUIERA de estos criterios:
+
+        • Propone, solicita o describe un proyecto de software, app, plataforma o
+          herramienta digital (para uso interno o externo).
+        • Involucra automatización, digitalización o mejora de un proceso de negocio
+          (logística, mantenimiento, control de calidad, operaciones de campo, etc.).
+        • Contiene información técnica, comercial o de proveedores que vale la pena
+          documentar o escalar (integraciones, carriers, APIs, propuestas de desarrollo).
+        • Requiere una decisión, aprobación o colaboración de otro rol del equipo
+          (CEO, CFO, CTO, Product Manager, área de operaciones, etc.).
+        • Toca áreas estratégicas: eCommerce DTC, fidelización de clientes, eficiencia
+          de costos, integraciones críticas (SAP, Bókun, etc.), gestión de equipos.
+
+      Un correo es JUNK solo si es claramente spam, publicidad masiva sin relación con
+      el negocio, o un mensaje personal/social sin ninguna implicación operativa.
+
+      Ante la duda, clasifica como STRATEGIC y deja el razonamiento en el campo
+      "reasoning". Es mejor escalar un falso positivo que perder una oportunidad.
+
+      Asigna UNO de estos valores a classification:
+        - "STRATEGIC"   → El correo agrega valor o requiere acción bajo la estrategia
+        - "JUNK"        → Spam o contenido completamente irrelevante para el negocio
+
+      ═══════════════════════════════════════════════════════
+      PASO 2 — DECISIÓN DE ACCIONES
+      ═══════════════════════════════════════════════════════
+      Si classification == "JUNK":
+        • Solo registra el motivo del descarte en el campo "reasoning"
+        • Llama a LeaderNotificationTool para informar el descarte brevemente
+        • TERMINA (no ejecutes herramientas adicionales)
+
+      Si classification == "STRATEGIC":
+        Evalúa qué combinación de estas acciones se aplica:
+
+        A) DOCUMENTAR → Llama a ConfluenceUpsertTool
+           Úsala si el correo contiene información técnica, propuestas, datos
+           de proveedores o cualquier conocimiento que deba preservarse.
+           Space: "TECH", título descriptivo, contenido estructurado en Markdown.
+
+        B) REDACTAR BORRADOR → Llama a EmailDraftingTool
+           Úsala si se necesita validación, información adicional o colaboración
+           de otro rol del organigrama (CEO, CFO, CTO, Product Manager, etc.).
+           Urgency: evalúa según el tono y plazos mencionados en el correo.
+
+        C) NOTIFICAR AL LÍDER → Llama a LeaderNotificationTool (SIEMPRE para STRATEGIC)
+           Resume las decisiones y acciones tomadas.
+           Lista en pending_approvals todo lo que requiere aprobación humana.
+           Channel: "telegram" por defecto.
+
+      ═══════════════════════════════════════════════════════
+      PASO 3 — OUTPUT ESTRUCTURADO
+      ═══════════════════════════════════════════════════════
+      Devuelve EXCLUSIVAMENTE un objeto JSON válido con este esquema exacto:
+      {
+        "classification": "STRATEGIC" | "JUNK",
+        "reasoning": "Explicación detallada del criterio aplicado",
+        "email_summary": {
+          "sender": "...",
+          "subject": "...",
+          "key_topics": ["tema1", "tema2"]
+        },
+        "actions_taken": [
+          {
+            "tool": "nombre_de_la_herramienta",
+            "status": "ok" | "error",
+            "details": "resumen del resultado"
+          }
+        ],
+        "pending_approvals": ["acción que necesita aprobación humana"],
+        "discarded": true | false,
+        "discard_reason": "Solo si classification == JUNK"
+      }
+
+    expected_result: |
+      JSON estructurado con classification, reasoning, email_summary, actions_taken,
+      pending_approvals y discard_reason (si aplica).
+
+  # ---------------------------------------------------------------------------
+  # Tareas anteriores — mantenidas para compatibilidad backward
+  # ---------------------------------------------------------------------------
+  - id: task_001
+    title: "Analizar logs de interacción"
+    owner: "analyst"
+    description: "Extraer métricas clave (intents, latencia, tokens) y devolver un resumen."
+    expected_result: "JSON con métricas agregadas y recomendaciones de optimización de prompts."
+
+  - id: task_002
+    title: "Diseño arquitectónico para pipeline de prompts"
+    owner: "architect"
+    description: "Proponer una arquitectura modular para manejo de múltiples LLMs, con análisis de costos y optimización de tokens."
+    expected_result: "Objeto JSON estructurado con decisiones, rationale, estimación de tokens y siguientes pasos."
