@@ -82,3 +82,186 @@ tasks:
     owner: "architect"
     description: "Proponer una arquitectura modular para manejo de múltiples LLMs, con análisis de costos y optimización de tokens."
     expected_result: "Objeto JSON estructurado con decisiones, rationale, estimación de tokens y siguientes pasos."
+
+  # ---------------------------------------------------------------------------
+  # Multi-Agent Strategy Crew Tasks
+  # ---------------------------------------------------------------------------
+  
+  - id: strategy_coordinate
+    title: "Coordinar procesamiento de iniciativa estratégica"
+    owner: "coordinator"
+    llm_config:
+      enable_reasoning: true
+      max_tokens: 800
+      temperature: 0.5  # Más conservador para decisiones críticas
+      timeout: 120
+    description: |
+      Iniciativa entrante (captada por Nia):
+      {initiative_input}
+      
+      Tu rol como Coordinador:
+      1. Validar que la información es suficiente para procesar
+      2. Delegar a Triage Strategist para clasificación F1-F4
+      3. Revisar resultados de BA y Researcher
+      4. Aprobar o rechazar escritura al HTML SSOT
+      
+      Si falta información crítica, devuelve:
+      {{"action": "REQUEST_MORE_INFO", "questions": ["¿Quién es el owner?", "¿Cuál es el deadline?"]}}
+      
+      Si está completo y validado:
+      {{"action": "APPROVED", "foco": "F1|F2|F3|F4", "type": "MODIFICACIÓN|NUEVA_INICIATIVA"}}
+    expected_result: |
+      JSON con acción (APPROVED, REJECTED, REQUEST_MORE_INFO) y justificación.
+  
+  - id: strategy_classify
+    title: "Clasificar iniciativa en Focos F1-F4"
+    owner: "triage_strategist"
+    llm_config:
+      enable_reasoning: false  # Decisión rápida basada en keywords
+      max_tokens: 300
+      temperature: 0.3  # Muy determinístico
+      timeout: 60
+    description: |
+      Iniciativa:
+      {initiative_input}
+      
+      Clasifícala según los 4 Focos estratégicos:
+      - F1: Logística & 3PLs (keywords: 3pl, carrier, tracking, OTD)
+      - F2: Experiencia Cliente (keywords: ux, bokun, shopify, fidelización)
+      - F3: Concha y Toro (keywords: sap, viña, marketplace, tours)
+      - F4: Optimización Oferta (keywords: precio, vilaport, catálogo, margen)
+      
+      Valida alineación con OKRs:
+      - OTD 95% | Conversión +20% | Ventas 2x | Recompra 40%
+      
+      Responde:
+      {{
+        "classification": "STRATEGIC" | "JUNK",
+        "foco": "F1" | "F2" | "F3" | "F4" | null,
+        "okr_alignment": "Alta|Media|Baja",
+        "reasoning": "Por qué este Foco"
+      }}
+    expected_result: |
+      JSON con classification, foco, okr_alignment y reasoning.
+  
+  - id: strategy_document
+    title: "Documentar iniciativa y gestionar duplicados"
+    owner: "business_analyst"
+    llm_config:
+      enable_reasoning: true   # Análisis de duplicados requiere razonamiento
+      max_tokens: 1200
+      temperature: 0.4
+      timeout: 180  # Tiempo extra para ChromaDB search + write HTML
+    description: |
+      Iniciativa validada:
+      {initiative_input}
+      
+      Foco asignado: {foco}
+      
+      **FLUJO OBLIGATORIO:**
+      
+      1. BUSCAR DUPLICADOS usando html_strategy_database:
+         Llama la herramienta con EXACTAMENTE estos parámetros:
+         {{
+           "action": "search",
+           "query": "<descripción de la iniciativa>",
+           "threshold": 0.85
+         }}
+         
+         - Si similarity > 0.85 → MODIFICACIÓN (usa initiative_id retornado)
+         - Si similarity < 0.85 → NUEVA INICIATIVA
+      
+      2. ESTRUCTURAR CONTENIDO:
+         Genera un diccionario con:
+         - title: claro y conciso (max 80 chars)
+         - status: "En progreso" | "Planificado" | "Backlog" | "Activo"
+         - objective: qué se quiere lograr (1-2 oraciones)
+         - impact: métricas esperadas (ej: "OTD +15%", "Conversión +10%")
+         - owner: responsable (nombre o área)
+         - deadline: fecha estimada (YYYY-MM-DD o "Q1 2026")
+      
+      3. ESCRIBIR AL HTML usando html_strategy_database:
+      
+         Si MODIFICACIÓN (duplicado encontrado):
+         {{
+           "action": "update",
+           "initiative_id": "<ID del duplicado>",
+           "new_content": {{
+             "title": "...",
+             "objective": "...",
+             "impact": "...",
+             "owner": "...",
+             "deadline": "..."
+           }},
+           "mark_changed": true
+         }}
+         
+         Si NUEVA INICIATIVA:
+         {{
+           "action": "create",
+           "foco": "{foco}",
+           "initiative_data": {{
+             "title": "...",
+             "status": "...",
+             "objective": "...",
+             "impact": "...",
+             "owner": "...",
+             "deadline": "..."
+           }}
+         }}
+      
+      Responde al final con:
+      {{
+        "action": "MODIFICACIÓN" | "NUEVA_INICIATIVA",
+        "initiative_id": "F1-XXX" (existente o nuevo generado),
+        "content": {{...datos estructurados...}},
+        "html_updated": true | false,
+        "similarity_score": 0.XX (del search)
+      }}
+    expected_result: |
+      JSON con action, initiative_id, content, confirmación de escritura HTML y similarity_score.
+  
+  - id: strategy_research
+    title: "Validar viabilidad técnica de iniciativa"
+    owner: "researcher"
+    llm_config:
+      enable_reasoning: true
+      max_tokens: 1000
+      temperature: 0.5
+      timeout: 180  # Tiempo para llamadas a SerperDevTool
+    description: |
+      Iniciativa a validar:
+      {initiative_input}
+      
+      **TU MISIÓN:**
+      
+      1. INVESTIGAR APIs/Integraciones:
+         - Usa SerperDevTool para buscar: "{initiative_input} API documentation"
+         - ¿Existe API pública? ¿Requiere auth?
+         - Rate limits, costos, restricciones
+      
+      2. IDENTIFICAR DEPENDENCIAS:
+         - ¿Afecta Shopify? ¿SAP? ¿Bókun?
+         - ¿Requiere DB nueva? ¿Workers? ¿Cache?
+      
+      3. ANALIZAR RIESGOS:
+         - Vendor lock-in
+         - Latencia
+         - Escalabilidad
+      
+      4. RECOMENDAR STACK:
+         - Stack sugerido (Node.js, Python, etc.)
+         - Librerías/frameworks
+         - Esfuerzo estimado (horas/días)
+      
+      Responde:
+      {{
+        "viable": true | false,
+        "api_available": "Sí, [URL]" | "No, requiere scraping",
+        "dependencies": ["Shopify", "PostgreSQL", ...],
+        "risks": ["..."],
+        "recommended_stack": "...",
+        "effort_estimate": "X días"
+      }}
+    expected_result: |
+      JSON con validación técnica, riesgos, stack recomendado y estimación.

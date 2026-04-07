@@ -24,6 +24,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 from typing import Any, Dict, Generator, List, Optional, Tuple
 
 import yaml
@@ -35,6 +36,12 @@ from src.tools import (
     EmailDraftingTool,
     LeaderNotificationTool,
 )
+from src.strategy_tools.html_strategy_tool import HTMLStrategyTool
+try:
+    from crewai_tools import SerperDevTool  # type: ignore
+except ImportError:
+    SerperDevTool = None  # type: ignore
+    logger.warning("SerperDevTool not available (install: pip install crewai-tools)")
 from src.input_sources import (
     EmailInboxTool,
     ChatMessageInboxTool,
@@ -116,15 +123,17 @@ def _build_llm(tier: str = "premium", api_key: Optional[str] = None) -> Any:
 
 
 # ---------------------------------------------------------------------------
-# Reasoning sanitizer callback for CrewAI
+# Reasoning sanitizer callback for CrewAI (DEPRECATED)
 # ---------------------------------------------------------------------------
 
 def _sanitize_reasoning_callback(step_output: Any) -> Any:
     """CrewAI step_callback para limpiar razonamiento visible de modelos LLM.
     
-    Se ejecuta después de cada step del agente (incluyendo llamadas LLM).
-    Intercepta la respuesta cruda y remueve bloques de razonamiento antes
-    de que lleguen al agente.
+    ⚠️ DEPRECATED: Este callback ya no es necesario cuando se usa LMStudioLiteLLM.
+    La API nativa de LM Studio separa razonamiento de mensajes mediante el
+    atributo type en el output array, sin necesidad de regex frágiles.
+    
+    Se mantiene para compatibilidad con litellm estándar (Gemini, etc.)
     
     Soporta:
     1. Formato nativo LM Studio: output array con type="reasoning"|"message"
@@ -243,11 +252,8 @@ def _sanitize_reasoning_callback(step_output: Any) -> Any:
 def _build_local_llm(enable_reasoning: bool = True) -> Any:
     """Build an LLM pointing to the local LM Studio server.
 
-    Uses LiteLLM's OpenAI-compatible provider via crewai LLM:
-      model    = "openai/auto" (LM Studio usará el modelo activo)
-      api_base = http://localhost:1234/v1
-      api_key  = "lm-studio"  (any non-empty string works)
-
+    Usa crewai.LLM con litellm en modo OpenAI-compatible apuntando a LM Studio.
+    
     Args:
         enable_reasoning: Si True, permite reasoning para análisis profundo (triage).
                          Si False, desactiva reasoning para respuestas rápidas (conversación).
@@ -257,62 +263,52 @@ def _build_local_llm(enable_reasoning: bool = True) -> Any:
       LMSTUDIO_MODEL     (opcional: nombre específico del modelo.
                           Si no se define, usa el modelo activo en LM Studio)
 
-    LM Studio API reference:
-      - reasoning: "off"|"low"|"medium"|"high"|"on"  ← parámetro oficial LM Studio
-      - max_output_tokens: int                        ← nombre correcto en LM Studio
-      - repeat_penalty, top_p, top_k, min_p          ← soportados nativamente
+    LM Studio expone endpoint OpenAI-compatible en /v1/chat/completions
+    que litellm puede consumir con formato "openai/<model>"
     """
-    import litellm
-    litellm.set_verbose = True
-
-    base_url = os.getenv("LMSTUDIO_BASE_URL", _LMSTUDIO_DEFAULT_URL).rstrip("/")
-    model = os.getenv("LMSTUDIO_MODEL", "")
-    # Si no hay modelo explícito, LM Studio usa el que esté cargado.
-    # Usamos "auto" como placeholder que LM Studio ignora.
-    litellm_name = f"openai/{model}" if model else "openai/auto"
-
     try:
-        from crewai import LLM  # type: ignore
-
-        if enable_reasoning:
-            # ── TRIAGE ──────────────────────────────────────────────────────
-            # Reasoning habilitado: el modelo puede pensar antes de responder.
-            # El parser en kickoff() extraerá el JSON tras el bloque <think>.
-            # NO usamos extra_body.reasoning porque litellm no maneja correctamente
-            # el formato de output de LM Studio (array con {type: "reasoning"} y
-            # {type: "message"}) — el content queda vacío.
-            extra_body = {
-                "max_output_tokens": 1500,   # Suficiente para JSON completo + razonamiento
-                "repeat_penalty": 1.05,
-                "top_p": 0.95,
-            }
-            max_tokens = 1500
-            logger.info("🔧 LLM config (TRIAGE): max_output_tokens=1500, reasoning en texto plano")
-        else:
-            # ── CONVERSACIÓN ─────────────────────────────────────────────────
-            # Sin reasoning: respuesta directa. El modelo Qwen3 igual genera un
-            # mini-razonamiento (es su comportamiento default), pero el parser
-            # lo filtra con regex.
-            extra_body = {
-                "max_output_tokens": 300,
-                "repeat_penalty": 1.1,
-                "top_p": 0.9,
-                "min_p": 0.05,
-            }
-            max_tokens = 300
-            logger.info("🔧 LLM config (CONVERSACIÓN): max_output_tokens=300, parser filtra reasoning")
-
-        return LLM(
-            model=litellm_name,
+        from crewai import LLM
+        
+        # Leer configuración de .env
+        base_url = os.getenv("LMSTUDIO_BASE_URL", "http://localhost:1234/v1")
+        model_name = os.getenv("LMSTUDIO_MODEL", "lmstudio-model")  # nombre dummy
+        
+        # Normalizar base_url para asegurar /v1 al final
+        if not base_url.endswith("/v1"):
+            base_url = base_url.rstrip("/") + "/v1"
+        
+        # Probar conexión al servidor LM Studio
+        import requests
+        try:
+            # Endpoint de modelos disponibles
+            models_url = base_url.replace("/v1", "") + "/v1/models"
+            response = requests.get(models_url, timeout=2)
+            
+            if response.status_code == 200:
+                models_data = response.json()
+                available_models = models_data.get("data", [])
+                if available_models:
+                    # Usar el primer modelo activo
+                    model_name = available_models[0].get("id", model_name)
+                    logger.debug("LM Studio modelo detectado: %s", model_name)
+        except Exception as check_exc:
+            logger.debug("No se pudo verificar modelos en LM Studio: %s", check_exc)
+        
+        # Crear LLM de CrewAI apuntando a LM Studio
+        # Formato: "openai/<model>" con base_url personalizada
+        llm = LLM(
+            model=f"openai/{model_name}",
             base_url=base_url,
-            api_key="lm-studio",
+            api_key="lm-studio",  # Dummy key (LM Studio no requiere auth)
             temperature=0.7,
-            max_tokens=max_tokens,   # litellm lo mapea a max_tokens en la solicitud
-            extra_body=extra_body,   # LM Studio lee reasoning y max_output_tokens de aquí
-            verbose=True,
+            max_tokens=1500 if enable_reasoning else 500,
         )
+        
+        logger.debug("LM Studio LLM creado: %s @ %s", model_name, base_url)
+        return llm
+        
     except Exception as exc:
-        logger.debug("Could not build local LLM: %s", exc)
+        logger.debug("Could not build LM Studio LLM: %s", exc)
         return None
 
 
@@ -551,23 +547,12 @@ class TriageCrew:
         self._agents_cfg = self._load_yaml(self.AGENTS_CFG)
         self._tasks_cfg = self._load_yaml(self.TASKS_CFG)
 
-        # Output tools (write to Confluence, draft emails, notify leader)
-        self.confluence_tool = ConfluenceUpsertTool()
-        self.email_tool = EmailDraftingTool()
-        self.notification_tool = LeaderNotificationTool()
-
+        # NOTA: Ya NO usamos ConfluenceUpsertTool, EmailDraftingTool ni LeaderNotificationTool
+        # El único flujo es Multi-Agent Strategy Crew → HTMLStrategyTool (SSOT único)
+        
         # Input source tools (read from email inbox and chat inbox)
         self.email_inbox_tool = EmailInboxTool()
         self.chat_inbox_tool = ChatMessageInboxTool()
-
-        # Full tool list exposed to the crewai agent
-        self._tools = [
-            self.email_inbox_tool,
-            self.chat_inbox_tool,
-            self.confluence_tool,
-            self.email_tool,
-            self.notification_tool,
-        ]
 
         # stub_mode=True (o env var TRIAGE_STUB_MODE=1) omite toda la
         # inicialización de LLMs y crewai — ideal para tests unitarios rápidos.
@@ -576,76 +561,26 @@ class TriageCrew:
         if stub_mode:
             self.llm = None
             self.local_llm = None
-            self._crew = None
-            self._local_crew = None
             return
 
-        # Build primary LLM (Gemini)
-        agent_cfg = self._agents_cfg.get("agents", {}).get("triage_analyst", {})
-        tier = agent_cfg.get("default_tier", "standard")
-        self.llm = _build_llm(tier=tier, api_key=self.api_key)
-
-        # Build local LLM fallback (LM Studio)
-        self.local_llm = _build_local_llm()
-
-        # Attempt to build real crewai Agent + Task
-        self._crew = self._build_crewai_crew(agent_cfg, self.llm, use_pydantic_output=True)
-        # Local crew: disable output_pydantic — reasoning models emit <think> blocks
-        # before JSON which breaks crewai's pydantic validator. We parse raw ourselves.
-        self._local_crew = self._build_crewai_crew(agent_cfg, self.local_llm, use_pydantic_output=False) if self.local_llm else None
+        # ── PRIORIDAD: LM STUDIO LOCAL → GEMINI API (FALLBACK) ──────────────
+        # Intentar construir LLM local (LM Studio) primero
+        logger.info("🔍 Intentando conectar con LM Studio local...")
+        local_llm = _build_local_llm(enable_reasoning=True)
+        
+        if local_llm is not None:
+            logger.info("✅ LM Studio conectado exitosamente - usando modelo local")
+            self.llm = local_llm
+        else:
+            logger.warning("⚠️ LM Studio no disponible, usando Gemini API como fallback")
+            agent_cfg = self._agents_cfg.get("agents", {}).get("triage_analyst", {})
+            tier = agent_cfg.get("default_tier", "standard")
+            self.llm = _build_llm(tier=tier, api_key=self.api_key)
 
     # ------------------------------------------------------------------
     def _load_yaml(self, path: str) -> Dict[str, Any]:
         with open(path, "r", encoding="utf-8") as fh:
             return yaml.safe_load(fh) or {}
-
-    # ------------------------------------------------------------------
-    def _build_crewai_crew(self, agent_cfg: Dict[str, Any], llm: Any = None, use_pydantic_output: bool = True) -> Optional[Any]:
-        """Try to build a real crewai Crew. Returns None if crewai unavailable or llm is None."""
-        if llm is None:
-            return None
-        try:
-            from crewai import Agent, Crew, Task  # type: ignore
-
-            agent = Agent(
-                role=agent_cfg.get("role", "Nia — Analista Estratégica de Triaje"),
-                goal=agent_cfg.get("goal", "Triaje de correos"),
-                backstory=agent_cfg.get("backstory", ""),
-                llm=llm,
-                tools=self._tools,
-                verbose=True,
-                max_iter=3,  # Máximo 3 iteraciones — evita loops infinitos en reasoning models
-                allow_delegation=False,  # No delegar tareas — evita conversaciones multi-agente
-            )
-
-            task_cfg = next(
-                (t for t in self._tasks_cfg.get("tasks", []) if t.get("id") == "triage_email"),
-                {},
-            )
-
-            task_kwargs: Dict[str, Any] = dict(
-                description=task_cfg.get("description", "Procesa el email: {email_entrante}"),
-                # tasks.yaml usa "expected_result" (no "expected_output")
-                expected_output=task_cfg.get("expected_result", task_cfg.get("expected_output", "JSON estructurado con clasificación")),
-                agent=agent,
-            )
-            # Reasoning models (qwen3, deepseek-r1, etc.) emit a long <think>…</think>
-            # block before the actual JSON.  output_pydantic tries to validate the
-            # entire string and fails.  We skip it for local crews and parse raw ourselves.
-            if use_pydantic_output:
-                task_kwargs["output_pydantic"] = TriageDecisionOutput
-
-            task = Task(**task_kwargs)
-            return Crew(
-                agents=[agent],
-                tasks=[task],
-                verbose=True,
-                max_rpm=10,  # Rate limit: máximo 10 requests por minuto al LLM
-                step_callback=_sanitize_reasoning_callback,  # Limpiar razonamiento automáticamente
-            )
-        except Exception as exc:
-            logger.debug("crewai crew build failed: %s", exc)
-            return None
 
     # ------------------------------------------------------------------
     @staticmethod
@@ -679,8 +614,474 @@ class TriageCrew:
         return result[0]
 
     # ------------------------------------------------------------------
+    def _ensure_html_written(
+        self,
+        ba_output: Dict[str, Any],
+        initiative_input: str,
+        foco: Optional[str],
+        researcher_output: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        """Guarantee the initiative is written to the HTML SSOT.
+
+        The BA agent may report html_updated=True without having called the
+        tool (LLM hallucination). This method checks whether an entry with
+        the expected initiative_id actually exists in the HTML file; if not,
+        it writes the initiative programmatically using the structured data
+        that the BA reported.
+
+        Returns the (possibly updated) ba_output dict, always with a real
+        initiative_id and html_updated=True on success.
+        """
+        from src.strategy_tools.html_strategy_tool import HTMLStrategyTool
+
+        html_tool = HTMLStrategyTool()
+
+        # 1. Determine the initiative_id the agent claimed to have written
+        initiative_id = ba_output.get("initiative_id", "")
+        action = ba_output.get("action", "NUEVA_INICIATIVA")
+
+        # 2. Check if it actually exists in the HTML
+        already_written = False
+        if initiative_id:
+            result = json.loads(html_tool._run(action="read", initiative_id=initiative_id))
+            already_written = result.get("status") == "ok"
+
+        if already_written:
+            logger.info("✅ [ensure_html_written] Iniciativa %s ya existe en HTML — BA usó el tool correctamente", initiative_id)
+            ba_output["html_updated"] = True
+            return ba_output
+
+        # 3. The HTML was NOT written — apply programmatic fallback
+        logger.warning("⚠️ [ensure_html_written] BA no escribió al HTML (hallucination). Aplicando fallback programático…")
+        print("\n⚠️  [ensure_html_written] Escritura programática al HTML (el agente no llamó al tool)\n")
+
+        # Build initiative_data from BA output or sensible defaults
+        content = ba_output.get("content", {})
+        safe_foco = foco if foco in ("F1", "F2", "F3", "F4") else "F4"
+
+        # Search for duplicates first
+        search_result = json.loads(
+            html_tool._run(action="search", query=initiative_input[:300], threshold=0.85)
+        )
+        matches = search_result.get("matches", [])
+
+        if matches:
+            # UPDATE existing initiative
+            best_match = matches[0]
+            existing_id = best_match.get("initiative_id", "")
+            logger.info("[ensure_html_written] Duplicado encontrado: %s — actualizando", existing_id)
+
+            new_content = {
+                "title": content.get("title") or f"Iniciativa estratégica ({safe_foco})",
+                "objective": content.get("objective") or initiative_input[:200],
+                "impact": content.get("impact") or researcher_output.get("effort_estimate", "TBD"),
+                "owner": content.get("owner") or "TBD",
+                "deadline": content.get("deadline") or "TBD",
+            }
+            write_result = json.loads(
+                html_tool._run(
+                    action="update",
+                    initiative_id=existing_id,
+                    new_content=new_content,
+                    mark_changed=True,
+                )
+            )
+            if write_result.get("status") == "ok":
+                logger.info("✅ [ensure_html_written] Iniciativa %s actualizada", existing_id)
+                ba_output["action"] = "MODIFICACIÓN"
+                ba_output["initiative_id"] = existing_id
+                ba_output["html_updated"] = True
+            else:
+                logger.error("❌ [ensure_html_written] Error actualizando: %s", write_result)
+                ba_output["html_updated"] = False
+        else:
+            # CREATE new initiative
+            initiative_data = {
+                "title": content.get("title") or f"Iniciativa estratégica ({safe_foco})",
+                "status": content.get("status") or "Planificado",
+                "objective": content.get("objective") or initiative_input[:200],
+                "impact": content.get("impact") or "TBD",
+                "owner": content.get("owner") or "TBD",
+                "deadline": content.get("deadline") or "TBD",
+            }
+            write_result = json.loads(
+                html_tool._run(action="create", foco=safe_foco, initiative_data=initiative_data)
+            )
+            if write_result.get("status") == "ok":
+                new_id = write_result.get("initiative_id", "")
+                logger.info("✅ [ensure_html_written] Nueva iniciativa creada: %s", new_id)
+                ba_output["action"] = "NUEVA_INICIATIVA"
+                ba_output["initiative_id"] = new_id
+                ba_output["html_updated"] = True
+            else:
+                logger.error("❌ [ensure_html_written] Error creando: %s", write_result)
+                ba_output["html_updated"] = False
+
+        return ba_output
+
+    # ------------------------------------------------------------------
+    def kickoff_strategy_crew(self, initiative_input: str) -> Dict[str, Any]:
+        """Run multi-agent strategy crew to process strategic initiative.
+        
+        Flujo completo:
+        1. Coordinator valida completitud
+        2. Triage Strategist clasifica en F1-F4
+        3. Business Analyst busca duplicados + escribe HTML
+        4. Researcher valida viabilidad técnica (en paralelo con BA)
+        5. Coordinator aprueba resultado final
+        
+        Args:
+            initiative_input: Descripción de la iniciativa (extraída de conversación/email)
+            
+        Returns:
+            Dict con resultado del procesamiento multi-agente
+        """
+        try:
+            from crewai import Agent, Crew, Task  # type: ignore
+            
+            logger.info("🚀 Activando Multi-Agent Strategy Crew…")
+            
+            # ── PASO 1: TRIAGE STRATEGIST (clasificación F1-F4) ──
+            strategist_cfg = self._agents_cfg.get("agents", {}).get("triage_strategist", {})
+            strategist_agent = Agent(
+                role=strategist_cfg.get("role", "Estratega de Clasificación"),
+                goal=strategist_cfg.get("goal", "Clasificar iniciativa en Focos F1-F4"),
+                backstory=strategist_cfg.get("backstory", ""),
+                llm=self.llm,
+                tools=[],  # No tools, solo razonamiento
+                verbose=True,
+                max_iter=1,
+                allow_delegation=False,
+            )
+            
+            strategy_task_cfg = next(
+                (t for t in self._tasks_cfg.get("tasks", []) if t.get("id") == "strategy_classify"),
+                {}
+            )
+            
+            strategist_task = Task(
+                description=strategy_task_cfg.get("description", "Clasificar iniciativa").format(
+                    initiative_input=initiative_input
+                ),
+                expected_output=strategy_task_cfg.get("expected_result", "JSON con foco"),
+                agent=strategist_agent,
+            )
+            
+            strategist_crew = Crew(
+                agents=[strategist_agent],
+                tasks=[strategist_task],
+                verbose=True,
+            )
+            
+            logger.info("🔍 Paso 1: Triage Strategist clasificando iniciativa…")
+            strategist_result = strategist_crew.kickoff()
+            
+            # Extraer texto del CrewOutput (preferir task.output.raw sobre crew.raw)
+            strategist_output = {}
+            # task.output.raw contiene SOLO el Final Answer del agente (sin verbose frame)
+            if hasattr(strategist_task, 'output') and strategist_task.output:
+                t_out = strategist_task.output
+                if hasattr(t_out, 'json_dict') and t_out.json_dict:
+                    strategist_output = t_out.json_dict
+                elif hasattr(t_out, 'raw') and t_out.raw:
+                    strategist_output = self._parse_json_output(t_out.raw)
+            # Fallback: usar CrewOutput
+            if not strategist_output:
+                if hasattr(strategist_result, 'json_dict') and strategist_result.json_dict:
+                    strategist_output = strategist_result.json_dict
+                elif hasattr(strategist_result, 'raw'):
+                    strategist_output = self._parse_json_output(strategist_result.raw)
+                else:
+                    strategist_output = self._parse_json_output(str(strategist_result))
+            
+            logger.debug(f"Strategist output: {strategist_output}")
+            
+            if strategist_output.get("classification") == "JUNK":
+                logger.warning("❌ Iniciativa rechazada por Triage Strategist: no es estratégica")
+                return {
+                    "status": "rejected",
+                    "reason": "No alineada con Focos estratégicos",
+                    "details": strategist_output
+                }
+            
+            foco = strategist_output.get("foco")
+            logger.info(f"✅ Foco detectado: {foco}")
+            
+            # ── PASO 2: BUSINESS ANALYST (deduplicación + HTML) ──
+            ba_cfg = self._agents_cfg.get("agents", {}).get("business_analyst", {})
+            
+            # Agregar HTMLStrategyTool al BA
+            html_tool = HTMLStrategyTool() if HTMLStrategyTool else None
+            ba_tools = [html_tool] if html_tool else []
+            
+            ba_agent = Agent(
+                role=ba_cfg.get("role", "Analista de Negocio"),
+                goal=ba_cfg.get("goal", "Documentar iniciativa sin duplicar"),
+                backstory=ba_cfg.get("backstory", ""),
+                llm=self.llm,
+                tools=ba_tools,
+                verbose=True,
+                max_iter=3,
+                allow_delegation=False,
+            )
+            
+            ba_task_cfg = next(
+                (t for t in self._tasks_cfg.get("tasks", []) if t.get("id") == "strategy_document"),
+                {}
+            )
+            
+            ba_task = Task(
+                description=ba_task_cfg.get("description", "Documentar iniciativa").format(
+                    initiative_input=initiative_input,
+                    foco=foco
+                ),
+                expected_output=ba_task_cfg.get("expected_result", "JSON con HTML updated"),
+                agent=ba_agent,
+            )
+            
+            # ── PASO 3: RESEARCHER (validación técnica en paralelo) ──
+            researcher_cfg = self._agents_cfg.get("agents", {}).get("researcher", {})
+            
+            # Agregar SerperDevTool al Researcher
+            serper_tool = SerperDevTool() if SerperDevTool else None
+            researcher_tools = [serper_tool] if serper_tool else []
+            
+            researcher_agent = Agent(
+                role=researcher_cfg.get("role", "Investigador Técnico"),
+                goal=researcher_cfg.get("goal", "Validar viabilidad técnica"),
+                backstory=researcher_cfg.get("backstory", ""),
+                llm=self.llm,
+                tools=researcher_tools,
+                verbose=True,
+                max_iter=2,
+                allow_delegation=False,
+            )
+            
+            researcher_task_cfg = next(
+                (t for t in self._tasks_cfg.get("tasks", []) if t.get("id") == "strategy_research"),
+                {}
+            )
+            
+            researcher_task = Task(
+                description=researcher_task_cfg.get("description", "Validar técnicamente").format(
+                    initiative_input=initiative_input
+                ),
+                expected_output=researcher_task_cfg.get("expected_result", "JSON con viabilidad"),
+                agent=researcher_agent,
+            )
+            
+            # ── PASO 4: EJECUTAR BA + RESEARCHER EN PARALELO ──
+            logger.info("📝 Paso 2: Business Analyst + Researcher trabajando en paralelo…")
+            
+            parallel_crew = Crew(
+                agents=[ba_agent, researcher_agent],
+                tasks=[ba_task, researcher_task],
+                verbose=True,
+            )
+            
+            parallel_result = parallel_crew.kickoff()
+            
+            # Parsear resultados: usar task.output.raw (solo el Final Answer, sin verbose frame)
+            ba_output = {}
+            researcher_output = {}
+            
+            if hasattr(ba_task, 'output') and ba_task.output:
+                t_out = ba_task.output
+                if hasattr(t_out, 'json_dict') and t_out.json_dict:
+                    ba_output = t_out.json_dict
+                elif hasattr(t_out, 'raw') and t_out.raw:
+                    ba_output = self._parse_json_output(t_out.raw)
+            
+            if hasattr(researcher_task, 'output') and researcher_task.output:
+                t_out = researcher_task.output
+                if hasattr(t_out, 'json_dict') and t_out.json_dict:
+                    researcher_output = t_out.json_dict
+                elif hasattr(t_out, 'raw') and t_out.raw:
+                    researcher_output = self._parse_json_output(t_out.raw)
+            
+            logger.info(f"✅ BA completado: {ba_output.get('action', 'unknown')}")
+            logger.info(f"✅ Researcher completado: viable={researcher_output.get('viable', 'unknown')}")
+            
+            # ── FALLBACK PROGRAMÁTICO: garantizar escritura real en HTML ──────
+            # El agente LLM puede reportar html_updated=True sin haber llamado
+            # realmente al tool. Verificamos directamente y escribimos si falta.
+            ba_output = self._ensure_html_written(
+                ba_output=ba_output,
+                initiative_input=initiative_input,
+                foco=foco,
+                researcher_output=researcher_output,
+            )
+            
+            # ── PASO 5: COORDINATOR (aprobación final) ──
+            coordinator_cfg = self._agents_cfg.get("agents", {}).get("coordinator", {})
+            
+            coordinator_agent = Agent(
+                role=coordinator_cfg.get("role", "Coordinador Estratégico"),
+                goal=coordinator_cfg.get("goal", "Aprobar resultado final"),
+                backstory=coordinator_cfg.get("backstory", ""),
+                llm=self.llm,
+                tools=[],
+                verbose=True,
+                max_iter=1,
+                allow_delegation=False,
+            )
+            
+            coordinator_task_cfg = next(
+                (t for t in self._tasks_cfg.get("tasks", []) if t.get("id") == "strategy_coordinate"),
+                {}
+            )
+            
+            approval_input = f"""
+Iniciativa: {initiative_input}
+
+Resultados del crew:
+- Foco: {foco}
+- BA: {json.dumps(ba_output, ensure_ascii=False)}
+- Researcher: {json.dumps(researcher_output, ensure_ascii=False)}
+
+¿Aprobar escritura al HTML SSOT?
+"""
+            
+            coordinator_task = Task(
+                description=coordinator_task_cfg.get("description", "Aprobar resultado").format(
+                    initiative_input=approval_input
+                ),
+                expected_output=coordinator_task_cfg.get("expected_result", "JSON con aprobación"),
+                agent=coordinator_agent,
+            )
+            
+            coordinator_crew = Crew(
+                agents=[coordinator_agent],
+                tasks=[coordinator_task],
+                verbose=True,
+            )
+            
+            logger.info("🎯 Paso 3: Coordinator revisando resultado…")
+            coordinator_result = coordinator_crew.kickoff()
+            
+            # Parsear resultado: usar coordinator_task.output.raw (Final Answer puro)
+            coordinator_output = {}
+            if hasattr(coordinator_task, 'output') and coordinator_task.output:
+                t_out = coordinator_task.output
+                if hasattr(t_out, 'json_dict') and t_out.json_dict:
+                    coordinator_output = t_out.json_dict
+                elif hasattr(t_out, 'raw') and t_out.raw:
+                    coordinator_output = self._parse_json_output(t_out.raw)
+            # Fallback: CrewOutput
+            if not coordinator_output:
+                if hasattr(coordinator_result, 'json_dict') and coordinator_result.json_dict:
+                    coordinator_output = coordinator_result.json_dict
+                elif hasattr(coordinator_result, 'raw'):
+                    coordinator_output = self._parse_json_output(coordinator_result.raw)
+                else:
+                    coordinator_output = self._parse_json_output(str(coordinator_result))
+            
+            logger.debug(f"Coordinator output: {coordinator_output}")
+            
+            # Determinar aprobación: parse del Coordinator O fallback si HTML fue escrito
+            coordinator_approved = coordinator_output.get("action") == "APPROVED"
+            html_was_written = ba_output.get("html_updated", False)
+            
+            if coordinator_approved or html_was_written:
+                if not coordinator_approved:
+                    logger.info("✅ Coordinator no parseado pero HTML ya escrito — aprobando por fallback")
+                else:
+                    logger.info("✅ ¡Iniciativa APROBADA por Coordinator!")
+                return {
+                    "status": "approved",
+                    "foco": foco,
+                    "action": ba_output.get("action"),
+                    "initiative_id": ba_output.get("initiative_id"),
+                    "technical_validation": researcher_output,
+                    "html_updated": html_was_written,
+                    "message": "Iniciativa procesada exitosamente por Multi-Agent Strategy Crew"
+                }
+            else:
+                logger.warning(f"⚠️ Iniciativa RECHAZADA: {coordinator_output.get('message')}")
+                return {
+                    "status": "rejected",
+                    "reason": coordinator_output.get("message", "No aprobado por Coordinator"),
+                    "details": coordinator_output
+                }
+                
+        except Exception as exc:
+            logger.error(f"❌ Error en Multi-Agent Strategy Crew: {exc}")
+            return {
+                "status": "error",
+                "message": str(exc)
+            }
+    
+    @staticmethod
+    def _parse_json_output(text: str) -> Dict[str, Any]:
+        """Parse JSON output from agent (handles <think> blocks and extra text)."""
+        if not text or not text.strip():
+            logger.warning("_parse_json_output: texto vacío")
+            return {}
+        
+        try:
+            # Remover bloques de reasoning
+            cleaned = re.sub(r'<think>.*?</think>', '', text, flags=re.DOTALL | re.IGNORECASE)
+            cleaned = re.sub(r'<reasoning>.*?</reasoning>', '', cleaned, flags=re.DOTALL | re.IGNORECASE)
+            
+            # Remover markdown code fences (con posibles espacios/│ de CrewAI verbose frame)
+            # Normalizar primero: quitar el frame visual "│  " de CrewAI
+            cleaned = re.sub(r'^\s*│\s?', '', cleaned, flags=re.MULTILINE)
+            
+            # Remover backtick fences
+            cleaned = re.sub(r'```json\s*', '', cleaned)
+            cleaned = re.sub(r'```\s*', '', cleaned)
+            
+            # Buscar el primer bloque JSON válido (busca { ... } con anidamiento)
+            # Usar un enfoque más robusto que cuenta llaves
+            brace_start = cleaned.find('{')
+            if brace_start != -1:
+                depth = 0
+                for i, ch in enumerate(cleaned[brace_start:], start=brace_start):
+                    if ch == '{':
+                        depth += 1
+                    elif ch == '}':
+                        depth -= 1
+                        if depth == 0:
+                            json_candidate = cleaned[brace_start:i+1]
+                            try:
+                                return json.loads(json_candidate)
+                            except json.JSONDecodeError:
+                                # Intentar reparar comillas simples o trailing commas
+                                repaired = re.sub(r',\s*}', '}', json_candidate)
+                                repaired = re.sub(r',\s*]', ']', repaired)
+                                try:
+                                    return json.loads(repaired)
+                                except json.JSONDecodeError:
+                                    pass
+                            break
+            
+            # Intentar parsear el texto completo limpio
+            try:
+                return json.loads(cleaned.strip())
+            except json.JSONDecodeError:
+                pass
+            
+            # Fallback: retornar dict vacío
+            logger.warning(f"No se pudo parsear JSON de: {text[:200]}...")
+            return {}
+            
+        except Exception as exc:
+            logger.error(f"Error en _parse_json_output: {exc}")
+            logger.debug(f"Texto original: {text[:300]}...")
+            return {}
+
+    # ------------------------------------------------------------------
     def kickoff(self, email_entrante: str) -> TriageDecisionOutput:
-        """Run the triage pipeline on the given raw email text.
+        """Run the UNIFIED triage pipeline using Multi-Agent Strategy Crew.
+        
+        NUEVO FLUJO (sin triage "rápido"):
+        1. Todo mensaje/email pasa por Multi-Agent Strategy Crew
+        2. Triage Strategist clasifica en F1-F4 o JUNK
+        3. Business Analyst busca duplicados y actualiza HTML (única fuente de verdad)
+        4. Researcher valida viabilidad técnica
+        5. Coordinator aprueba antes de escribir
+        
+        No más ConfluenceMock ni stub pipeline — solo HTMLStrategyTool.
 
         Args:
             email_entrante: Raw email text including headers like
@@ -692,233 +1093,367 @@ class TriageCrew:
         if not email_entrante or not email_entrante.strip():
             raise ValueError("email_entrante must be a non-empty string")
 
-        # ── Tier 1: Local LM Studio (primary) ───────────────────────────────
-        # El modelo local es el motor principal de Nia. Solo recurre a Gemini
-        # si falla (ej: contexto demasiado largo) o si no está disponible.
-        if self._local_crew is not None:
-            try:
-                logger.info("Running triage with local LLM (LM Studio — primary)…")
-                raw = self._run_with_timeout(
-                    self._local_crew.kickoff,
-                    inputs={"email_entrante": email_entrante},
-                    timeout_seconds=120  # 2 minutos máximo
+        logger.info("🚀 Iniciando triage con Multi-Agent Strategy Crew…")
+        
+        # Ejecutar Multi-Agent Crew (el ÚNICO flujo)
+        try:
+            strategy_result = self.kickoff_strategy_crew(email_entrante)
+            
+            # Convertir resultado del Strategy Crew a TriageDecisionOutput
+            if strategy_result.get("status") == "approved":
+                return TriageDecisionOutput(
+                    classification="STRATEGIC",
+                    reasoning=f"Iniciativa clasificada como {strategy_result.get('foco')} y {strategy_result.get('action')}.",
+                    email_summary=EmailSummary(
+                        sender=_stub_extract_metadata(email_entrante).get("sender", "unknown"),
+                        subject=_stub_extract_metadata(email_entrante).get("subject", ""),
+                        key_topics=[strategy_result.get('foco', ''), strategy_result.get('action', '')]
+                    ),
+                    actions_taken=[
+                        ActionRecord(
+                            tool="HTMLStrategyTool",
+                            status="ok",
+                            details=f"{strategy_result.get('action')} en {strategy_result.get('initiative_id')} (Foco {strategy_result.get('foco')})"
+                        )
+                    ],
+                    pending_approvals=[],
+                    discarded=False
                 )
-                return self._parse_crewai_output(raw, email_entrante)
-            except TimeoutError:
-                logger.warning("Local LLM timeout (120s) — reasoning model loop detected; trying Gemini fallback…")
-            except Exception as exc:
-                # Si es un error de contexto demasiado largo, intentamos Gemini
-                is_context_error = "context length" in str(exc).lower() or "400" in str(exc)
-                if is_context_error:
-                    logger.warning("Local LLM context overflow; trying Gemini fallback…")
-                else:
-                    logger.warning("Local LLM kickoff failed (%s); trying Gemini fallback…", exc)
-
-        # ── Tier 2: Gemini (fallback) ───────────────────────────────────────
-        if self._crew is not None:
-            try:
-                logger.info("Running triage with Gemini (fallback)…")
-                raw = self._run_with_timeout(
-                    self._crew.kickoff,
-                    inputs={"email_entrante": email_entrante},
-                    timeout_seconds=60  # 1 minuto máximo para Gemini
+            elif strategy_result.get("status") == "rejected":
+                return TriageDecisionOutput(
+                    classification="JUNK",
+                    reasoning=strategy_result.get("reason", "No alineado con focos estratégicos"),
+                    email_summary=EmailSummary(
+                        sender=_stub_extract_metadata(email_entrante).get("sender", "unknown"),
+                        subject=_stub_extract_metadata(email_entrante).get("subject", ""),
+                        key_topics=[]
+                    ),
+                    actions_taken=[],
+                    pending_approvals=[],
+                    discarded=True,
+                    discard_reason=strategy_result.get("reason")
                 )
-                return self._parse_crewai_output(raw, email_entrante)
-            except TimeoutError:
-                logger.warning("Gemini timeout (60s); falling back to stub")
-            except Exception as exc:
-                is_quota = "429" in str(exc) or "RESOURCE_EXHAUSTED" in str(exc)
-                if is_quota:
-                    logger.warning("Gemini quota exhausted (429); falling back to stub")
-                else:
-                    logger.warning("Gemini kickoff failed (%s); falling back to stub", exc)
-
-        # ── Tier 3: Deterministic stub ──────────────────────────────────────
-        logger.warning("All LLMs unavailable — using deterministic stub pipeline")
-        return _run_stub_pipeline(email_entrante)
+            else:
+                # Error en Strategy Crew
+                return TriageDecisionOutput(
+                    classification="STRATEGIC",
+                    reasoning=f"Error procesando: {strategy_result.get('message', 'unknown error')}",
+                    email_summary=EmailSummary(
+                        sender=_stub_extract_metadata(email_entrante).get("sender", "unknown"),
+                        subject=_stub_extract_metadata(email_entrante).get("subject", ""),
+                        key_topics=[]
+                    ),
+                    actions_taken=[],
+                    pending_approvals=["Revisar error manualmente"],
+                    discarded=False
+                )
+        
+        except Exception as exc:
+            logger.error(f"❌ Error fatal en kickoff: {exc}")
+            # Fallback mínimo
+            return TriageDecisionOutput(
+                classification="STRATEGIC",
+                reasoning=f"Error procesando mensaje: {str(exc)}",
+                email_summary=EmailSummary(
+                    sender="error",
+                    subject="Error",
+                    key_topics=[]
+                ),
+                actions_taken=[],
+                pending_approvals=["Revisar error manualmente"],
+                discarded=False
+            )
 
     # ------------------------------------------------------------------
-    def kickoff_conversation(self, user_message: str, conversation_history: list = None) -> str:
+    def kickoff_conversation(self, user_message: str, conversation_history: list = None, user_id: str = "default") -> str:
         """Run a lightweight conversation (NO REASONING) for quick responses.
         
         Diferencia clave con kickoff():
         - kickoff() → Triage analítico profundo (task: triage_email, llm_config con reasoning)
         - kickoff_conversation() → Respuestas rápidas (task: conversation_assist, llm_config sin reasoning)
         
+        Consulta memoria semántica PRIMERO antes de responder, especialmente si el usuario
+        menciona "recuerda", "memoria", "conversamos", "requerimiento", etc.
+        
         Args:
             user_message: Mensaje del usuario (pregunta, saludo, etc.)
             conversation_history: Lista de mensajes previos (opcional)
+            user_id: ID del usuario para acceder a su memoria episódica
             
         Returns:
             Respuesta de texto directo (no TriageDecisionOutput)
         """
         try:
-            from crewai import Agent, Task, Crew  # type: ignore
+            # ── PASO 1: CONSULTAR MEMORIA EPISÓDICA ────────────────────────────
+            # Detectar si el usuario pide recordar algo o menciona conversaciones previas
+            from src.conversation_memory import create_user_memory
             
-            # Cargar TAREA de conversación desde tasks.yaml
-            conversation_task_cfg = None
-            for task_cfg in self._tasks_cfg.get("tasks", []):
-                if task_cfg.get("id") == "conversation_assist":
-                    conversation_task_cfg = task_cfg
-                    break
+            semantic_context = ""
+            user_message_lower = user_message.lower()
             
-            if conversation_task_cfg is None:
-                return "Error: No se encontró la tarea 'conversation_assist' en tasks.yaml"
+            # Keywords que indican búsqueda en memoria
+            memory_triggers = [
+                "recuerda", "recordar", "memoria", "conversamos", "hablamos",
+                "dijimos", "mencionaste", "mencioné", "requerimiento", "propuesta",
+                "proyecto", "tema", "asunto", "lo que", "anterior", "antes",
+                "más reciente", "último", "última"
+            ]
             
-            # Leer llm_config de la tarea
-            llm_config = conversation_task_cfg.get("llm_config", {})
-            enable_reasoning = llm_config.get("enable_reasoning", False)
-            timeout = llm_config.get("timeout", 30)
+            needs_memory_search = any(trigger in user_message_lower for trigger in memory_triggers)
             
-            # Build LLM con configuración de la tarea
-            conversation_llm = _build_local_llm(enable_reasoning=enable_reasoning)
+            if needs_memory_search:
+                try:
+                    memory = create_user_memory(user_id, max_topics=10)
+                    
+                    # Detectar tema específico mencionado (SAP, Shopify, requerimiento, etc.)
+                    topic_keywords = {
+                        "sap", "shopify", "3pl", "carrier", "integración", "integracion",
+                        "ecommerce", "e-commerce", "bokun", "bókun", "mantenimiento",
+                        "viña", "vina", "sistema", "requerimiento", "propuesta"
+                    }
+                    
+                    detected_topic = None
+                    for keyword in topic_keywords:
+                        if keyword in user_message_lower:
+                            detected_topic = keyword
+                            break
+                    
+                    # Búsqueda semántica (por tema específico o más reciente)
+                    context_messages = memory.get_context_for_triage(query=detected_topic, max_messages=5)
+                    
+                    if context_messages and len(context_messages.strip()) > 50:
+                        # Formato simple como "conversaciones previas" (sin estructura especial)
+                        semantic_context = f"\n\nCONVERSACIONES PREVIAS (para tu referencia interna):\n{context_messages}\n"
+                        logger.info("[Conversación] Memoria semántica recuperada: %d chars", len(semantic_context))
+                    else:
+                        logger.info("[Conversación] No se encontró contexto relevante en memoria episódica")
+                
+                except Exception as mem_exc:
+                    logger.warning("[Conversación] Error accediendo memoria episódica: %s", mem_exc)
             
-            if conversation_llm is None:
+            # ── PASO 2: CONSTRUIR PROMPT CON PERSONALIDAD NIA ──────────────────
+            # Usar el LLM ya inicializado (sin reasoning para conversaciones)
+            # Si no hay LLM disponible, fallback a mensaje de error
+            if self.llm is None:
+                logger.error("No LLM available for conversation")
                 return "Lo siento, no puedo procesar tu mensaje en este momento."
             
-            # Usar configuración del agente desde agents.yaml
-            agent_cfg = self._agents_cfg.get("agents", {}).get("triage_analyst", {})
+            logger.info("Using LLM for conversation: %s", type(self.llm).__name__)
             
-            # Backstory minimalista + instrucción explícita de NO razonar en texto plano
-            conversation_backstory = (
-                "Asistente de información técnica y estratégica. "
-                "Responde de forma directa sin mostrar tu razonamiento interno."
-            )
-            
-            agent = Agent(
-                role="Asistente",
-                goal="Responder la pregunta de forma concisa",
-                backstory=conversation_backstory,
-                llm=conversation_llm,
-                tools=[],  # Sin herramientas para conversación
-                verbose=False,
-                max_iter=1,
-                allow_delegation=False,
-            )
-            
-            # Construir contexto de conversación
-            context_str = ""
+            # System prompt con personalidad de Nia (analista estratégica Descorcha)
+            system_prompt = """Eres Nia, la analista estratégica de Descorcha.
+
+Tu personalidad:
+- Profesional, directa y estratégica
+- Orientada a la acción (propones siguiente paso concreto)
+- Basas tus respuestas en datos y memoria de conversaciones
+- SIEMPRE consultas tu memoria antes de responder
+- Reconoces cuando NO sabes algo (no inventas)
+
+Contexto organizacional:
+- Descorcha: empresa de ecommerce y experiencias (viñas, turismo)
+- Foco estratégico: transformación digital, integraciones SAP/Bókun/Shopify, 3PLs
+- Rol técnico: validar propuestas, documentar en Confluence, coordinar con CTO
+
+Reglas de respuesta:
+1. Usa las "CONVERSACIONES PREVIAS" para informar tu respuesta (pero no las copies literalmente)
+2. Refiere el contexto naturalmente: "Retomando lo que hablamos sobre X..." o "Según la conversación anterior..."
+3. Si NO tienes información relevante → "No encuentro esa conversación, ¿puedes darme más contexto?"
+4. Responde DIRECTAMENTE al usuario (no formatees metadata ni hagas listas de "Tema:", "Contexto:", etc.)
+5. Mantén respuestas concisas (2-3 párrafos máximo)
+6. Ofrece acción concreta al final"""
+
+            # Construir prompt con contexto conversacional (corto plazo)
+            short_term_context = ""
             if conversation_history and len(conversation_history) > 0:
-                recent = conversation_history[-3:]
-                context_str = "\n".join([
-                    f"{msg.get('role', 'user')}: {msg.get('content', '')[:100]}"
+                recent = conversation_history[-3:]  # Últimos 3 intercambios
+                short_term_context = "\n".join([
+                    f"{msg.get('role', 'user').capitalize()}: {msg.get('content', '')[:150]}"
                     for msg in recent
                 ])
             
-            # Usar plantilla de la tarea con variables
-            task_description = conversation_task_cfg.get("description", "").format(
-                user_message=user_message[:500],
-                conversation_history=context_str or "(sin contexto previo)"
-            )
-            task_expected = conversation_task_cfg.get("expected_result", "Respuesta conversacional")
+            # ── PASO 2.5: DETECTAR INICIATIVA ESTRATÉGICA ──────────────────────
+            # Si el mensaje contiene keywords de iniciativas, activar multi-agent crew
+            initiative_keywords = [
+                # Acciones estratégicas
+                "implementar", "integrar", "desarrollar", "crear", "ajustar",
+                "optimizar", "mejorar", "automatizar", "migrar", "rediseñar",
+                # Sistemas/tecnologías
+                "api", "sistema", "plataforma", "integración", "integracion",
+                "shopify", "sap", "bokun", "bókun", "3pl", "carrier",
+                # Decisiones estratégicas
+                "propuesta", "iniciativa", "proyecto", "requerimiento",
+                "estrategia", "roadmap", "prioridad"
+            ]
             
-            task = Task(
-                description=task_description,
-                expected_output=task_expected,
-                agent=agent,
-            )
+            # NUEVA LÓGICA: detectar comandos explícitos de registro
+            registration_triggers = [
+                "registrar", "registra", "documenta", "documentar",
+                "agrega", "agregar", "añade", "añadir",
+                "crea la iniciativa", "crear iniciativa"
+            ]
             
-            crew = Crew(
-                agents=[agent],
-                tasks=[task],
-                verbose=False,
-                step_callback=_sanitize_reasoning_callback,  # Limpiar razonamiento automáticamente
-            )
+            explicit_registration = any(trigger in user_message_lower for trigger in registration_triggers)
             
-            # Ejecutar con timeout de la config
-            print(f"\n{'='*80}")
-            print(f"📤 PROMPT COMPLETO ENVIADO AL MODELO:")
-            print(f"{'='*80}")
-            print(f"TASK DESCRIPTION:\n{task_description}")
-            print(f"\nTASK EXPECTED OUTPUT:\n{task_expected}")
-            print(f"\nAGENT ROLE: {agent.role}")
-            print(f"AGENT GOAL: {agent.goal}")
-            print(f"AGENT BACKSTORY: {agent.backstory}")
-            print(f"{'='*80}\n")
-            
-            raw = self._run_with_timeout(
-                crew.kickoff,
-                timeout_seconds=timeout
+            # Detectar si hay iniciativa en el mensaje actual O si se pide registro explícito
+            is_strategic_initiative = (
+                any(kw in user_message_lower for kw in initiative_keywords) or
+                explicit_registration
             )
             
-            print(f"\n{'='*80}")
-            print(f"📥 RESPUESTA COMPLETA DEL MODELO:")
-            print(f"{'='*80}")
-            print(f"TYPE: {type(raw)}")
-            print(f"HAS raw attr: {hasattr(raw, 'raw')}")
-            print(f"STR COMPLETO:\n{str(raw)}")
-            if hasattr(raw, 'raw'):
-                print(f"\nraw.raw COMPLETO:\n{raw.raw}")
-            print(f"{'='*80}\n")
+            # Si se pide registro pero no hay iniciativa en el mensaje actual,
+            # buscar en el historial conversacional reciente
+            if explicit_registration and not any(kw in user_message_lower for kw in initiative_keywords):
+                if conversation_history and len(conversation_history) > 0:
+                    # Buscar iniciativa en los últimos 5 mensajes
+                    recent_messages = conversation_history[-5:]
+                    for msg in recent_messages:
+                        content = msg.get('content', '').lower()
+                        if any(kw in content for kw in initiative_keywords):
+                            # Encontramos la iniciativa en el contexto reciente
+                            # Combinar mensaje actual + contexto para el Strategy Crew
+                            user_message = f"{msg.get('content', '')}\n\nAcción solicitada: {user_message}"
+                            is_strategic_initiative = True
+                            logger.info("🔍 Iniciativa detectada en contexto conversacional previo")
+                            break
             
-            # Extraer texto de la respuesta
-            # El callback _sanitize_reasoning_callback ya limpió el razonamiento,
-            # pero por si acaso aplicamos una limpieza adicional post-crew
-            result = ""
-            if hasattr(raw, "raw"):
-                result = raw.raw.strip()
-                print(f"📥 EXTRAÍDO DE raw.raw: '{result}'")
+            # Activar multi-agent crew si detecta iniciativa
+            strategy_crew_result = None
+            if is_strategic_initiative:
+                logger.info("🚀 [Conversación] Detectada iniciativa estratégica, activando Multi-Agent Crew…")
+                logger.info(f"📝 Input para Strategy Crew: {user_message[:200]}...")
+                try:
+                    strategy_crew_result = self.kickoff_strategy_crew(user_message)
+                    
+                    if strategy_crew_result.get("status") == "approved":
+                        # Agregar resultado al contexto para que Nia lo mencione
+                        initiative_summary = f"""
+[INICIATIVA PROCESADA POR STRATEGY CREW]
+- Foco: {strategy_crew_result.get('foco')}
+- Acción: {strategy_crew_result.get('action')}
+- ID: {strategy_crew_result.get('initiative_id')}
+- Validación técnica: {"✓ Viable" if strategy_crew_result.get('technical_validation', {}).get('viable') else "⚠ Requiere revisión"}
+"""
+                        semantic_context += initiative_summary
+                        logger.info("✅ Iniciativa procesada exitosamente")
+                    else:
+                        logger.warning("⚠️ Iniciativa rechazada o con error: %s", strategy_crew_result)
+                
+                except Exception as strategy_exc:
+                    logger.error("❌ Error ejecutando Strategy Crew: %s", strategy_exc)
+            
+            # ── PASO 3: GENERAR RESPUESTA CONVERSACIONAL ───────────────────────
+            
+            # Combinar: system + memoria episódica + corto plazo + mensaje actual
+            if semantic_context or short_term_context:
+                prompt = f"""{system_prompt}
+
+{semantic_context}
+
+CONVERSACIÓN RECIENTE (corto plazo):
+{short_term_context}
+
+Usuario: {user_message}
+
+Nia (responde directamente al usuario, usando el contexto disponible pero SIN repetirlo):"""
             else:
-                result = str(raw).strip()
-                print(f"📥 EXTRAÍDO DE str(raw): '{result}'")
+                prompt = f"""{system_prompt}
+
+Usuario: {user_message}
+
+Nia (responde de forma concisa y directa):"""
             
-            # Limpieza post-callback (por si el callback no alcanzó a ejecutarse)
-            import re as _re
+            print(f"\n{'='*80}")
+            print(f"📤 PROMPT ENVIADO:")
+            print(f"{'='*80}")
+            print(prompt[:500])
+            print(f"{'='*80}\n")
             
-            # Estrategia agresiva: si el modelo empieza con razonamiento visible,
-            # buscar la ÚLTIMA aparición de un saludo o respuesta válida en español
-            # y descartar todo lo anterior
+            # Llamada al LLM usando litellm (CrewAI usa litellm internamente)
+            logger.info("Calling LLM with prompt length: %d", len(prompt))
             
-            # Buscar el último punto donde empieza contenido útil (saludo o respuesta)
-            useful_content_markers = [
-                r'¡Hola!',
-                r'Hola!',
-                r'Hola,',
-                r'\n\n[A-ZÁÉÍÓÚÑ][a-záéíóúñ]{3,}',  # Párrafo en español
-                r'\n#+\s+[A-ZÁÉÍÓÚÑ]',  # Header
-            ]
+            try:
+                import litellm
+                
+                # Extraer configuración del LLM de CrewAI
+                model = self.llm.model  # "openai/lmstudio-model"
+                base_url = getattr(self.llm, 'base_url', 'http://localhost:1234/v1')
+                api_key = getattr(self.llm, 'api_key', 'lm-studio')
+                
+                # Llamada usando litellm directamente
+                response = litellm.completion(
+                    model=model,
+                    messages=[{"role": "user", "content": prompt}],
+                    base_url=base_url,
+                    api_key=api_key,
+                    temperature=0.7,
+                    max_tokens=500,
+                )
+                
+                result = response.choices[0].message.content
+                logger.info("LLM returned result length: %d", len(result) if result else 0)
+                
+            except Exception as llm_exc:
+                logger.error("Error calling LLM: %s", llm_exc)
+                return "Lo siento, ocurrió un error al generar la respuesta."
             
-            last_useful_pos = -1
-            last_match_text = ""
+            print(f"\n{'='*80}")
+            print(f"📥 RESPUESTA DEL MODELO:")
+            print(f"{'='*80}")
+            print(f"TIPO: {type(result)}")
+            print(f"CONTENIDO: '{result[:500]}'")
+            print(f"{'='*80}\n")
             
-            for marker in useful_content_markers:
-                matches = list(_re.finditer(marker, result))
-                if matches:
-                    # Tomar la ÚLTIMA ocurrencia (la respuesta final real)
-                    last_match = matches[-1]
-                    if last_match.start() > last_useful_pos:
-                        last_useful_pos = last_match.start()
-                        last_match_text = marker
-            
-            # Si encontramos contenido útil y hay mucho texto antes (>100 chars),
-            # es razonamiento — cortarlo
-            if last_useful_pos > 100:
-                result = result[last_useful_pos:].strip()
-                print(f"🧹 Eliminado razonamiento: {last_useful_pos} chars antes de '{last_match_text[:20]}'")
-            
-            # Limpieza adicional de frases de thinking que hayan quedado
-            thinking_phrases = [
-                r'Remember to follow.*?\n',
-                r'The following is.*?\n',
-                r'Current Task:.*?\n',
-                r'Looking at the instructions.*?\n',
-                r'I notice.*?\n',
-                r'Since.*?I should.*?\n',
-            ]
-            for phrase_pattern in thinking_phrases:
-                result = _re.sub(phrase_pattern, '', result, flags=_re.IGNORECASE)
-            
-            result = result.strip()
-            
-            if not result:
-                print("⚠️ RESPUESTA VACÍA - retornando mensaje de error")
+            if not result or not result.strip():
                 return "Lo siento, no pude generar una respuesta. ¿Puedes intentar de nuevo?"
             
-            print(f"📥 RESPUESTA FINAL: '{result[:200]}'")
-            return result
+            # ── PASO 3: LIMPIAR RESPUESTA ──────────────────────────────────────
+            # Remover cualquier repetición del contexto interno que el modelo pueda haber generado
+            cleaned_result = result.strip()
             
-        except TimeoutError:
-            return "Disculpa, tardé demasiado en responder. ¿Puedes reformular tu pregunta?"
+            # Remover bloques explícitos de metadata/contexto
+            import re
+            
+            # Remover encabezado "**MEMORIA EPISÓDICA:**" y todo hasta el separador "---"
+            cleaned_result = re.sub(
+                r'\*\*MEMORIA EPISÓDICA:\*\*.*?(?:---+\s*\n|(?=\n\n[A-Z]))',
+                '',
+                cleaned_result,
+                flags=re.DOTALL | re.IGNORECASE
+            )
+            
+            # Remover viñetas con "* **Tema:**", "* **Contexto:**", etc.
+            cleaned_result = re.sub(
+                r'^\s*\*\s+\*\*(?:Tema|Contexto|Acción tomada):\*\*[^\n]*\n',
+                '',
+                cleaned_result,
+                flags=re.MULTILINE | re.IGNORECASE
+            )
+            
+            # Remover bloques "CONVERSACIONES PREVIAS (para tu referencia...)" si el modelo los repitió
+            cleaned_result = re.sub(
+                r'CONVERSACIONES PREVIAS \(para tu referencia[^\)]*\):.*?(?=\n\n[A-Z]|\Z)',
+                '',
+                cleaned_result,
+                flags=re.DOTALL | re.IGNORECASE
+            )
+            
+            # Remover separadores "---" excesivos
+            cleaned_result = re.sub(r'\n\s*---+\s*\n', '\n\n', cleaned_result)
+            
+            # Limpiar espacios múltiples
+            cleaned_result = re.sub(r'\n{3,}', '\n\n', cleaned_result).strip()
+            
+            # Safety check: si limpiamos demasiado, usar original
+            if len(cleaned_result) < len(result) * 0.3:
+                logger.warning("[Conversación] Limpieza removió demasiado (%d → %d chars), usando respuesta original", len(result), len(cleaned_result))
+                return result.strip()
+            
+            if len(cleaned_result) < len(result):
+                logger.info("[Conversación] Limpieza aplicada: %d → %d chars", len(result), len(cleaned_result))
+            
+            return cleaned_result
+            
         except Exception as exc:
             logger.warning("Conversation kickoff failed: %s", exc)
             return "Ocurrió un error procesando tu mensaje. ¿Puedes intentar de nuevo?"

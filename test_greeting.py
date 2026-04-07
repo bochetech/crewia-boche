@@ -1,6 +1,14 @@
 #!/usr/bin/env python3
 """Test específico para saludos que generan razonamiento duplicado."""
+import logging
 import os
+
+# Configurar logging ANTES de importar módulos
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(levelname)s:%(name)s:%(message)s'
+)
+
 os.environ["TELEGRAM_BOT_TOKEN"] = ""
 
 from src.triage_crew import TriageCrew

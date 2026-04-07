@@ -1,6 +1,7 @@
 # Core dependencies
 # Requires Python 3.10–3.13 — use .venv313 (Python 3.13.9)
 crewai>=1.0.0
+crewai-tools>=0.12.0      # SerperDevTool for web search
 langchain-google-genai>=2.0.0
 python-dotenv>=1.0.0
 pydantic>=2.0.0
@@ -9,3 +10,11 @@ pytest>=7.0.0
 pymupdf>=1.23.0           # PDF extraction
 python-telegram-bot>=21.0 # Telegram bot gateway
 litellm>=1.0.0            # LLM routing (OpenAI-compatible local servers like LM Studio)
+beautifulsoup4>=4.12.0    # HTML parsing for HTMLStrategyTool
+openai-whisper>=20231117  # Audio transcription (voice messages → text)
+pydub>=0.25.1             # Audio format conversion (ogg → wav)
+gTTS>=2.3.0               # Text-to-speech synthesis (voice responses)
+
+# Semantic memory dependencies
+chromadb>=0.4.0           # Vector database for topic clustering
+sentence-transformers>=2.2.0  # Multilingual embeddings (paraphrase-multilingual-MiniLM-L12-v2)

@@ -9,6 +9,8 @@ Tools:
 - ConfluenceUpsertTool   : Upsert knowledge into Confluence (search → update or create).
 - EmailDraftingTool      : Draft a collaboration e-mail to an organogram member.
 - LeaderNotificationTool : Send a structured chat summary to the tech lead (Telegram/Slack sim).
+- HTMLStrategyTool       : Read/write strategic initiatives in HTML SSOT (data/estrategia_descorcha.html).
+- SerperDevTool          : Search web for technical documentation (Google Search API via Serper).
 """
 from __future__ import annotations
 
@@ -330,6 +332,22 @@ class LeaderNotificationTool(_BASE):
 
 
 # ---------------------------------------------------------------------------
+# Re-export HTMLStrategyTool and SerperDevTool
+# ---------------------------------------------------------------------------
+try:
+    from src.strategy_tools.html_strategy_tool import HTMLStrategyTool  # type: ignore
+except ImportError:
+    HTMLStrategyTool = None  # type: ignore
+    logger.warning("HTMLStrategyTool not available (missing html_strategy_tool.py)")
+
+try:
+    from crewai_tools import SerperDevTool  # type: ignore
+except ImportError:
+    SerperDevTool = None  # type: ignore
+    logger.warning("SerperDevTool not available (install: pip install crewai-tools)")
+
+
+# ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
 __all__ = [
@@ -339,4 +357,6 @@ __all__ = [
     "EmailDraftingInput",
     "LeaderNotificationTool",
     "LeaderNotificationInput",
+    "HTMLStrategyTool",
+    "SerperDevTool",
 ]

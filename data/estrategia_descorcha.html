@@ -1,0 +1,783 @@
+<!DOCTYPE html>
+<html lang="es">
+ <head>
+  <meta charset="utf-8"/>
+  <meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+  <title>
+   Estrategia Descorcha — SSOT
+  </title>
+  <style>
+   body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; max-width: 1400px; margin: 0 auto; padding: 20px; }
+        header { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 30px; border-radius: 10px; margin-bottom: 30px; }
+        h1 { margin: 0 0 10px 0; font-size: 2.5em; }
+        .okrs { display: flex; gap: 20px; margin-top: 20px; }
+        .okr-card { background: rgba(255,255,255,0.2); padding: 15px; border-radius: 8px; flex: 1; }
+        table { width: 100%; border-collapse: collapse; margin: 30px 0; }
+        th { background: #667eea; color: white; padding: 15px; text-align: left; font-size: 1.1em; }
+        td { border: 1px solid #ddd; padding: 15px; vertical-align: top; width: 25%; }
+        .initiative { margin-bottom: 20px; padding: 15px; background: #f9f9f9; border-radius: 8px; }
+        .initiative h3 { margin: 0 0 10px 0; color: #667eea; }
+        .initiative .status { font-weight: bold; color: #28a745; }
+        mark { background-color: #ffeb3b; padding: 2px 4px; border-radius: 3px; }
+        footer { margin-top: 50px; padding: 30px; background: #f5f5f5; border-radius: 10px; }
+        .epic { margin-bottom: 30px; padding: 20px; background: white; border-left: 4px solid #667eea; }
+        .epic h3 { color: #667eea; margin-top: 0; }
+        .user-stories { margin: 15px 0; }
+        .user-stories li { margin: 8px 0; }
+        .prompts-desarrollo { background: #fff3cd; padding: 15px; border-radius: 5px; margin-top: 15px; }
+  </style>
+ </head>
+ <body>
+  <header id="aspiracion">
+   <h1>
+    🚀 Aspiración Ganadora
+   </h1>
+   <p style="font-size: 1.3em; margin: 10px 0;">
+    Ser el
+    <strong>
+     marketplace líder en experiencias premium
+    </strong>
+    en Chile, 
+            combinando ecommerce de vinos/regalos con turismo enológico, 
+            mediante una plataforma digital escalable y experiencias memorables.
+   </p>
+   <div class="okrs">
+    <div class="okr-card">
+     <h3>
+      📦 OTD (On-Time Delivery)
+     </h3>
+     <p>
+      <strong>
+       95%
+      </strong>
+      entregas a tiempo
+     </p>
+     <small>
+      Integración 3PLs + carriers confiables
+     </small>
+    </div>
+    <div class="okr-card">
+     <h3>
+      💰 Conversión
+     </h3>
+     <p>
+      <strong>
+       +20%
+      </strong>
+      tasa de conversión
+     </p>
+     <small>
+      UX optimizada + recomendaciones IA
+     </small>
+    </div>
+    <div class="okr-card">
+     <h3>
+      📈 Ventas
+     </h3>
+     <p>
+      <strong>
+       2x
+      </strong>
+      ingresos año a año
+     </p>
+     <small>
+      Expansión catálogo + cross-sell
+     </small>
+    </div>
+    <div class="okr-card">
+     <h3>
+      🔄 Recompra
+     </h3>
+     <p>
+      <strong>
+       40%
+      </strong>
+      clientes recurrentes
+     </p>
+     <small>
+      Programa fidelización + curación
+     </small>
+    </div>
+   </div>
+  </header>
+  <main>
+   <h2 style="text-align: center; color: #667eea; font-size: 2em; margin-bottom: 30px;">
+    📍 Focos Estratégicos 2026
+   </h2>
+   <table id="focos-estrategicos">
+    <thead>
+     <tr>
+      <th>
+       F1: Logística &amp; 3PLs
+      </th>
+      <th>
+       F2: Experiencia Cliente
+      </th>
+      <th>
+       F3: Alianza Concha y Toro
+      </th>
+      <th>
+       F4: Optimización Oferta
+      </th>
+     </tr>
+    </thead>
+    <tbody>
+     <tr>
+      <!-- F1: Logística & 3PLs -->
+      <td>
+       <div class="initiative" id="F1-106">
+        <h3>
+         Integración MultiVende
+        </h3>
+        <p class="status">
+         Status: En progreso (75%)
+        </p>
+        <p>
+         <strong>
+          Objetivo:
+         </strong>
+         Automatizar sincronización de inventario con 3PL MultiVende para reducir quiebres de stock.
+        </p>
+        <p>
+         <strong>
+          Impacto:
+         </strong>
+         OTD +15%, reducción manual 80%
+        </p>
+        <p>
+         <strong>
+          Owner:
+         </strong>
+         CTO + Operaciones
+        </p>
+        <p>
+         <strong>
+          Deadline:
+         </strong>
+         Q2 2026
+        </p>
+       </div>
+       <div class="initiative" id="F1-203">
+        <h3>
+         Carrier Selection Engine
+        </h3>
+        <p class="status">
+         Status: Planificado
+        </p>
+        <p>
+         <strong>
+          Objetivo:
+         </strong>
+         Sistema que elige carrier óptimo según zona, peso, urgencia (Chilexpress, Starken, Blue Express).
+        </p>
+        <p>
+         <strong>
+          Impacto:
+         </strong>
+         Costo envío -12%, OTD +8%
+        </p>
+        <p>
+         <strong>
+          Owner:
+         </strong>
+         Product Manager
+        </p>
+        <p>
+         <strong>
+          Deadline:
+         </strong>
+         Q3 2026
+        </p>
+       </div>
+       <div class="initiative" id="F1-305">
+        <h3>
+         API Tracking Unificada
+        </h3>
+        <p class="status">
+         Status: Backlog
+        </p>
+        <p>
+         <strong>
+          Objetivo:
+         </strong>
+         BFF que consolida tracking de múltiples carriers en una vista unificada para cliente.
+        </p>
+        <p>
+         <strong>
+          Impacto:
+         </strong>
+         Reducción tickets soporte 30%
+        </p>
+        <p>
+         <strong>
+          Owner:
+         </strong>
+         DevOps
+        </p>
+        <p>
+         <strong>
+          Deadline:
+         </strong>
+         Q4 2026
+        </p>
+       </div>
+      </td>
+      <!-- F2: Experiencia Cliente -->
+      <td>
+       <div class="initiative" id="F2-101">
+        <h3>
+         Migración Bókun → Shopify
+        </h3>
+        <p class="status">
+         Status: En progreso (40%)
+        </p>
+        <p>
+         <strong>
+          Objetivo:
+         </strong>
+         Unificar sistema de reservas (experiencias viñas) con ecommerce en Shopify para checkout único.
+        </p>
+        <p>
+         <strong>
+          Impacto:
+         </strong>
+         Conversión +18%, UX simplificada
+        </p>
+        <p>
+         <strong>
+          Owner:
+         </strong>
+         CTO + UX Lead
+        </p>
+        <p>
+         <strong>
+          Deadline:
+         </strong>
+         Q2 2026
+        </p>
+       </div>
+       <div class="initiative" id="F2-208">
+        <h3>
+         Recomendaciones IA
+        </h3>
+        <p class="status">
+         Status: Planificado
+        </p>
+        <p>
+         <strong>
+          Objetivo:
+         </strong>
+         Motor ML que sugiere vinos/experiencias basado en historial compras, navegación, temporada.
+        </p>
+        <p>
+         <strong>
+          Impacto:
+         </strong>
+         AOV +25%, cross-sell 2.3x
+        </p>
+        <p>
+         <strong>
+          Owner:
+         </strong>
+         Data Scientist
+        </p>
+        <p>
+         <strong>
+          Deadline:
+         </strong>
+         Q3 2026
+        </p>
+       </div>
+       <div class="initiative" id="F2-312">
+        <h3>
+         Programa Fidelización
+        </h3>
+        <p class="status">
+         Status: Diseño
+        </p>
+        <p>
+         <strong>
+          Objetivo:
+         </strong>
+         Sistema puntos/recompensas con tiers (Bronze, Silver, Gold) para incentivar recompra.
+        </p>
+        <p>
+         <strong>
+          Impacto:
+         </strong>
+         Recompra 40% → 55%
+        </p>
+        <p>
+         <strong>
+          Owner:
+         </strong>
+         Marketing + Product
+        </p>
+        <p>
+         <strong>
+          Deadline:
+         </strong>
+         Q4 2026
+        </p>
+       </div>
+      </td>
+      <!-- F3: Alianza Concha y Toro -->
+      <td>
+       <div class="initiative" id="F3-102">
+        <h3>
+         Integración SAP Concha y Toro
+        </h3>
+        <p class="status">
+         Status: En progreso (60%)
+        </p>
+        <p>
+         <strong>
+          Objetivo:
+         </strong>
+         Sincronización bidireccional catálogo/inventario con SAP de Concha y Toro para venta directa viñas premium.
+        </p>
+        <p>
+         <strong>
+          Impacto:
+         </strong>
+         Catálogo +300 SKUs, margen +8%
+        </p>
+        <p>
+         <strong>
+          Owner:
+         </strong>
+         CTO + Alianzas
+        </p>
+        <p>
+         <strong>
+          Deadline:
+         </strong>
+         Q2 2026
+        </p>
+       </div>
+       <div class="initiative" id="F3-205">
+        <h3>
+         Marketplace Viñas Premium
+        </h3>
+        <p class="status">
+         Status: Planificado
+        </p>
+        <p>
+         <strong>
+          Objetivo:
+         </strong>
+         Plataforma multi-vendor para que viñas asociadas vendan directo (comisión Descorcha 15%).
+        </p>
+        <p>
+         <strong>
+          Impacto:
+         </strong>
+         Oferta 3x, ingresos recurrentes
+        </p>
+        <p>
+         <strong>
+          Owner:
+         </strong>
+         Alianzas + Product
+        </p>
+        <p>
+         <strong>
+          Deadline:
+         </strong>
+         Q3 2026
+        </p>
+       </div>
+       <div class="initiative" id="F3-308">
+        <h3>
+         Tours Virtuales 360°
+        </h3>
+        <p class="status">
+         Status: Backlog
+        </p>
+        <p>
+         <strong>
+          Objetivo:
+         </strong>
+         Experiencia inmersiva VR de viñas para impulsar ventas de tours presenciales.
+        </p>
+        <p>
+         <strong>
+          Impacto:
+         </strong>
+         Conversión tours +30%
+        </p>
+        <p>
+         <strong>
+          Owner:
+         </strong>
+         Marketing + Tech
+        </p>
+        <p>
+         <strong>
+          Deadline:
+         </strong>
+         Q4 2026
+        </p>
+       </div>
+       <div class="initiative" id="F3-309">
+        <h3>
+         Sistema de Mantenimiento Preventivo para Maquinaria Viña Concha y Toro
+        </h3>
+        <p class="status">
+         Status: Planificado
+        </p>
+        <p>
+         <strong>
+          Objetivo:
+         </strong>
+         Implementar un sistema técnico que permita programar inspecciones, registrar fallas y generar reportes automáticos, integrándolo con SAP.
+        </p>
+        <p>
+         <strong>
+          Impacto:
+         </strong>
+         Reducir downtime en 30% y optimizar el inventario de repuestos.
+        </p>
+        <p>
+         <strong>
+          Owner:
+         </strong>
+         Equipo Operaciones Viña
+        </p>
+        <p>
+         <strong>
+          Deadline:
+         </strong>
+         Q2 2026
+        </p>
+       </div>
+      </td>
+      <!-- F4: Optimización Oferta -->
+      <td>
+       <div class="initiative" id="F4-101">
+        <h3>
+         Comparador Vilaport
+        </h3>
+        <p class="status">
+         Status: Activo
+        </p>
+        <p>
+         <strong>
+          Objetivo:
+         </strong>
+         Monitoreo automático de precios competencia (Vilaport, Vinos del Mundo) con alertas dinámicas.
+        </p>
+        <p>
+         <strong>
+          Impacto:
+         </strong>
+         Competitividad precio, margen optimizado
+        </p>
+        <p>
+         <strong>
+          Owner:
+         </strong>
+         Pricing Manager
+        </p>
+        <p>
+         <strong>
+          Deadline:
+         </strong>
+         Mantenimiento continuo
+        </p>
+       </div>
+       <div class="initiative" id="F4-204">
+        <h3>
+         Dynamic Pricing Engine
+        </h3>
+        <p class="status">
+         Status: Planificado
+        </p>
+        <p>
+         <strong>
+          Objetivo:
+         </strong>
+         Ajuste automático precios según demanda, stock, competencia, temporada (ML model).
+        </p>
+        <p>
+         <strong>
+          Impacto:
+         </strong>
+         Margen +12%, sell-through +20%
+        </p>
+        <p>
+         <strong>
+          Owner:
+         </strong>
+         Data + Pricing
+        </p>
+        <p>
+         <strong>
+          Deadline:
+         </strong>
+         Q3 2026
+        </p>
+       </div>
+       <div class="initiative" id="F4-307">
+        <h3>
+         Optimización Catálogo
+        </h3>
+        <p class="status">
+         Status: Diseño
+        </p>
+        <p>
+         <strong>
+          Objetivo:
+         </strong>
+         Análisis SKU performance, eliminar productos cola larga baja rotación, potenciar best-sellers.
+        </p>
+        <p>
+         <strong>
+          Impacto:
+         </strong>
+         Inventario -25%, cash flow +18%
+        </p>
+        <p>
+         <strong>
+          Owner:
+         </strong>
+         Product + Operaciones
+        </p>
+        <p>
+         <strong>
+          Deadline:
+         </strong>
+         Q4 2026
+        </p>
+       </div>
+      </td>
+     </tr>
+    </tbody>
+   </table>
+  </main>
+  <footer id="backlog">
+   <h2 style="color: #667eea; margin-top: 0;">
+    📋 Backlog Épicas — Desglose Técnico
+   </h2>
+   <article class="epic" id="epic-F1-106">
+    <h3>
+     📦 Épica: Integración MultiVende (F1-106)
+    </h3>
+    <p>
+     <strong>
+      Problema:
+     </strong>
+     Quiebres de stock frecuentes por desincronización manual inventario 3PL.
+    </p>
+    <p>
+     <strong>
+      Solución:
+     </strong>
+     API REST bidireccional (Shopify ↔ MultiVende) con webhook de actualización en tiempo real.
+    </p>
+    <div class="user-stories">
+     <h4>
+      Historias de Usuario:
+     </h4>
+     <ul>
+      <li>
+       <strong>
+        [US-001]
+       </strong>
+       Como operador, quiero que el stock se sincronice automáticamente cada 15 min para evitar sobreventa.
+      </li>
+      <li>
+       <strong>
+        [US-002]
+       </strong>
+       Como desarrollador, quiero logs de errores de sincronización para debugging rápido.
+      </li>
+      <li>
+       <strong>
+        [US-003]
+       </strong>
+       Como cliente, quiero ver stock real disponible antes de comprar para evitar cancelaciones.
+      </li>
+     </ul>
+    </div>
+    <div class="prompts-desarrollo">
+     <h4>
+      🛠️ Prompts para Desarrollo:
+     </h4>
+     <pre><code>### Prompt 1: Diseño de API
+"Diseña un adaptador BFF en Node.js (NestJS) que:
+1. Expone endpoint POST /webhook/stock-update
+2. Recibe payload de MultiVende con SKU, cantidad, warehouse
+3. Actualiza Shopify Inventory API con retry exponencial
+4. Almacena log en PostgreSQL para auditoría
+5. Emite evento a Redis pub/sub para invalidar cache
+
+Stack: NestJS, TypeScript, Bull (queues), PostgreSQL, Redis"
+
+### Prompt 2: Manejo de Errores
+"Implementa estrategia de resilencia para API MultiVende:
+- Circuit breaker (Polly pattern): si 5 fallos consecutivos → pausar 30s
+- Dead letter queue para updates fallidos
+- Alertas Slack si tasa error &gt; 5% en 1h
+- Dashboard Grafana con métricas: latencia p95, tasa éxito, backlog queue"
+
+### Prompt 3: Testing
+"Genera suite de tests E2E con Jest:
+1. Mock API MultiVende con diferentes escenarios (200, 400, 500, timeout)
+2. Validar que Shopify se actualiza correctamente
+3. Validar que errores se loguean sin crashear
+4. Test de carga: 1000 webhooks/min simultáneos"
+</code></pre>
+    </div>
+   </article>
+   <article class="epic" id="epic-F2-101">
+    <h3>
+     🎫 Épica: Migración Bókun → Shopify (F2-101)
+    </h3>
+    <p>
+     <strong>
+      Problema:
+     </strong>
+     Checkout fragmentado: clientes compran vino en Shopify pero reservan tours en Bókun (UX confusa, conversión -22%).
+    </p>
+    <p>
+     <strong>
+      Solución:
+     </strong>
+     Migrar sistema reservas a Shopify con custom app que maneja disponibilidad, calendario, confirmaciones.
+    </p>
+    <div class="user-stories">
+     <h4>
+      Historias de Usuario:
+     </h4>
+     <ul>
+      <li>
+       <strong>
+        [US-004]
+       </strong>
+       Como cliente, quiero agregar vino + tour en un solo carrito para pagar una vez.
+      </li>
+      <li>
+       <strong>
+        [US-005]
+       </strong>
+       Como viña, quiero gestionar disponibilidad de tours desde panel admin unificado.
+      </li>
+      <li>
+       <strong>
+        [US-006]
+       </strong>
+       Como sistema, quiero enviar confirmación automática por email con QR code para check-in.
+      </li>
+     </ul>
+    </div>
+    <div class="prompts-desarrollo">
+     <h4>
+      🛠️ Prompts para Desarrollo:
+     </h4>
+     <pre><code>### Prompt 1: Custom Shopify App
+"Crea Shopify app con Remix (TypeScript) que:
+1. Añade metafield 'bookable' a productos (true/false)
+2. Si bookable=true → muestra calendario disponibilidad
+3. Al agregar al carrito → valida cupo disponible (fetch a DB interna)
+4. Genera line_item con atributos: fecha, hora, num_personas
+5. Post-checkout → crea reserva en DB + envía email confirmación"
+
+### Prompt 2: Calendario Disponibilidad
+"Implementa sistema de slots de disponibilidad:
+- DB: PostgreSQL con tabla 'tour_slots' (tour_id, date, time, capacity, booked)
+- API GraphQL para frontend: query availableSlots(tourId, startDate, endDate)
+- Optimización: cache Redis con TTL 5 min para fechas populares
+- Validación: lock pesimista en DB al reservar (prevenir overbooking)"
+
+### Prompt 3: Migración de Datos
+"Script Python para migrar historial de Bókun a Shopify:
+1. Exportar reservas desde Bókun API (últimos 2 años)
+2. Transformar a formato Shopify metafields
+3. Importar con Shopify Admin API (bulk operations)
+4. Validar: comparar totales antes/después, reportar discrepancias"
+</code></pre>
+    </div>
+   </article>
+   <article class="epic" id="epic-F4-101">
+    <h3>
+     💲 Épica: Comparador Vilaport (F4-101)
+    </h3>
+    <p>
+     <strong>
+      Problema:
+     </strong>
+     Competidores (Vilaport, Vinos del Mundo) ajustan precios dinámicamente; Descorcha pierde ventas por no reaccionar a tiempo.
+    </p>
+    <p>
+     <strong>
+      Solución:
+     </strong>
+     Scraper automático + alertas + sugerencias de ajuste de precio.
+    </p>
+    <div class="user-stories">
+     <h4>
+      Historias de Usuario:
+     </h4>
+     <ul>
+      <li>
+       <strong>
+        [US-007]
+       </strong>
+       Como pricing manager, quiero recibir alerta Slack cuando competidor baje precio &gt;10% en SKU clave.
+      </li>
+      <li>
+       <strong>
+        [US-008]
+       </strong>
+       Como sistema, quiero scrapear precios diariamente de 5 competidores principales.
+      </li>
+      <li>
+       <strong>
+        [US-009]
+       </strong>
+       Como dashboard, quiero visualizar comparativa precio vs competencia en tiempo real.
+      </li>
+     </ul>
+    </div>
+    <div class="prompts-desarrollo">
+     <h4>
+      🛠️ Prompts para Desarrollo:
+     </h4>
+     <pre><code>### Prompt 1: Web Scraper
+"Implementa scraper Python (Scrapy + Playwright) que:
+1. Navega sitios: vilaport.cl, vinosdelmundo.cl, winelovers.cl
+2. Extrae: producto, precio, stock, descuentos (maneja JS dinámico)
+3. Almacena en PostgreSQL: competitor_prices (sku, competitor, price, date)
+4. Ejecuta diario vía cron (AWS Lambda + EventBridge)
+5. Resiliencia: retries, rotate user-agents, manejo CAPTCHAs (2Captcha API)"
+
+### Prompt 2: Sistema de Alertas
+"Crea servicio Node.js que:
+1. Compara precios Descorcha vs competidores cada 6h
+2. Calcula delta porcentual para top 100 SKUs
+3. Si delta &gt; 10% → POST a Slack webhook con: SKU, precio_nuestro, precio_competidor, sugerencia
+4. Almacena historial alertas para análisis tendencias"
+
+### Prompt 3: Dashboard Comparativo
+"Desarrolla dashboard React (Recharts) con:
+- Gráfico línea: evolución precio producto vs 3 competidores (últimos 30 días)
+- Tabla: SKUs donde estamos &gt;15% más caros (ordenado por volumen ventas)
+- Filtros: categoría, rango precio, competidor
+- Backend: API FastAPI que sirve datos de PostgreSQL"
+</code></pre>
+    </div>
+   </article>
+  </footer>
+  <div style="text-align: center; margin-top: 50px; padding: 20px; background: #f0f0f0; border-radius: 10px;">
+   <p style="color: #667eea; font-weight: bold; font-size: 1.2em;">
+    📅 Última actualización: 6 de abril de 2026 | 🤖 Gestionado por Nia
+   </p>
+   <p style="color: #888; font-size: 0.9em;">
+    Este documento es el SSOT (Single Source of Truth) de la estrategia Descorcha 2026.
+    <br/>
+    Cualquier modificación debe ser validada por el multi-agent crew antes de commit.
+   </p>
+  </div>
+ </body>
+</html>
