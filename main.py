@@ -268,7 +268,7 @@ def mode_telegram() -> None:
     print("\n🤖  Nia — Agente Estratégico | Telegram")
     print("    Iniciando canales…\n")
 
-    asyncio.run(channel.start())
+    channel.run()   # blocking — python-telegram-bot manages its own event loop
 
 
 def main() -> None:

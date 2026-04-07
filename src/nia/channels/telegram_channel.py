@@ -200,20 +200,39 @@ class TelegramChannel(ChannelAdapter):
     # ChannelAdapter lifecycle
     # ------------------------------------------------------------------
 
-    async def start(self) -> None:
-        """Build the Application and start polling (blocks until stopped)."""
+    def run(self) -> None:
+        """Build the Application and start polling.
+
+        Blocks until Ctrl+C or stop() is called.
+        python-telegram-bot manages its own event loop internally —
+        this must NOT be called inside an already-running asyncio loop.
+        """
         app = self._build_application()
         self._app = app
         logger.info("[TelegramChannel] Starting polling…")
-        await app.run_polling(
+        app.run_polling(
             allowed_updates=Update.ALL_TYPES,
             drop_pending_updates=True,
-            close_loop=False,
         )
+
+    async def start(self) -> None:
+        """Async entry point — delegates to the synchronous run() method.
+
+        python-telegram-bot's run_polling() creates its own event loop, so
+        we run it in a thread-executor to avoid 'event loop already running'.
+        """
+        import concurrent.futures
+        loop = asyncio.get_event_loop()
+        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+            await loop.run_in_executor(pool, self.run)
 
     async def stop(self) -> None:
         if self._app:
-            await self._app.stop()
+            # Signal the polling loop to stop — safe to call from any context
+            try:
+                self._app.stop_running()
+            except Exception:
+                pass
             self._app = None
 
     # ------------------------------------------------------------------
@@ -722,7 +741,7 @@ def run_bot(token: Optional[str] = None, nia=None) -> None:
     cfg.token = bot_token
 
     channel = TelegramChannel(config=cfg, nia=nia)
-    asyncio.run(channel.start())
+    channel.run()   # blocking — manages its own event loop internally
 
 
 __all__ = ["TelegramChannel", "TelegramChannelConfig", "run_bot"]
