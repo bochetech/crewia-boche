@@ -37,11 +37,6 @@ from src.tools import (
     LeaderNotificationTool,
 )
 from src.strategy_tools.html_strategy_tool import HTMLStrategyTool
-try:
-    from crewai_tools import SerperDevTool  # type: ignore
-except ImportError:
-    SerperDevTool = None  # type: ignore
-    logger.warning("SerperDevTool not available (install: pip install crewai-tools)")
 from src.input_sources import (
     EmailInboxTool,
     ChatMessageInboxTool,
@@ -49,6 +44,12 @@ from src.input_sources import (
 )
 
 logger = logging.getLogger(__name__)
+
+try:
+    from crewai_tools import SerperDevTool  # type: ignore
+except ImportError:
+    SerperDevTool = None  # type: ignore
+    logger.warning("SerperDevTool not available (install: pip install crewai-tools)")
 
 # ---------------------------------------------------------------------------
 # Environment loading (same pattern as original crew.py)
@@ -758,41 +759,59 @@ class TriageCrew:
         """Run multi-agent strategy crew to process strategic initiative.
         
         Flujo completo:
-        1. Coordinator valida completitud
-        2. Triage Strategist clasifica en F1-F4
-        3. Business Analyst busca duplicados + escribe HTML
-        4. Researcher valida viabilidad técnica (en paralelo con BA)
-        5. Coordinator aprueba resultado final
+        1. Triage Strategist clasifica en F1-F4 (single-agent crew)
+        2. Business Analyst (deduplicación + escribe HTML) y Researcher
+           (validación técnica) se ejecutan en paralelo real con threads.
+        3. _ensure_html_written garantiza escritura programática como fallback.
+        4. Coordinator aprueba resultado final (single-agent crew).
         
         Args:
-            initiative_input: Descripción de la iniciativa (extraída de conversación/email)
+            initiative_input: Descripción de la iniciativa
             
         Returns:
             Dict con resultado del procesamiento multi-agente
         """
         try:
+            import threading
             from crewai import Agent, Crew, Task  # type: ignore
             
             logger.info("🚀 Activando Multi-Agent Strategy Crew…")
-            
-            # ── PASO 1: TRIAGE STRATEGIST (clasificación F1-F4) ──
+
+            # ── Helper: extract JSON from a Task after kickoff ─────────────
+            def _extract_task_output(task: "Task", crew_result: Any) -> Dict[str, Any]:
+                """Return parsed JSON from task.output.raw first, then CrewOutput."""
+                # 1. task.output.raw  → Final Answer only (no verbose frame)
+                if hasattr(task, 'output') and task.output:
+                    t = task.output
+                    if hasattr(t, 'json_dict') and t.json_dict:
+                        return t.json_dict
+                    if hasattr(t, 'raw') and t.raw:
+                        parsed = self._parse_json_output(t.raw)
+                        if parsed:
+                            return parsed
+                # 2. Fallback: CrewOutput
+                if hasattr(crew_result, 'json_dict') and crew_result.json_dict:
+                    return crew_result.json_dict
+                if hasattr(crew_result, 'raw') and crew_result.raw:
+                    return self._parse_json_output(crew_result.raw)
+                return self._parse_json_output(str(crew_result))
+
+            # ── PASO 1: TRIAGE STRATEGIST (clasificación F1-F4) ──────────────
             strategist_cfg = self._agents_cfg.get("agents", {}).get("triage_strategist", {})
             strategist_agent = Agent(
                 role=strategist_cfg.get("role", "Estratega de Clasificación"),
                 goal=strategist_cfg.get("goal", "Clasificar iniciativa en Focos F1-F4"),
                 backstory=strategist_cfg.get("backstory", ""),
                 llm=self.llm,
-                tools=[],  # No tools, solo razonamiento
+                tools=[],
                 verbose=True,
                 max_iter=1,
                 allow_delegation=False,
             )
-            
             strategy_task_cfg = next(
                 (t for t in self._tasks_cfg.get("tasks", []) if t.get("id") == "strategy_classify"),
                 {}
             )
-            
             strategist_task = Task(
                 description=strategy_task_cfg.get("description", "Clasificar iniciativa").format(
                     initiative_input=initiative_input
@@ -800,155 +819,139 @@ class TriageCrew:
                 expected_output=strategy_task_cfg.get("expected_result", "JSON con foco"),
                 agent=strategist_agent,
             )
-            
             strategist_crew = Crew(
                 agents=[strategist_agent],
                 tasks=[strategist_task],
                 verbose=True,
             )
-            
             logger.info("🔍 Paso 1: Triage Strategist clasificando iniciativa…")
             strategist_result = strategist_crew.kickoff()
-            
-            # Extraer texto del CrewOutput (preferir task.output.raw sobre crew.raw)
-            strategist_output = {}
-            # task.output.raw contiene SOLO el Final Answer del agente (sin verbose frame)
-            if hasattr(strategist_task, 'output') and strategist_task.output:
-                t_out = strategist_task.output
-                if hasattr(t_out, 'json_dict') and t_out.json_dict:
-                    strategist_output = t_out.json_dict
-                elif hasattr(t_out, 'raw') and t_out.raw:
-                    strategist_output = self._parse_json_output(t_out.raw)
-            # Fallback: usar CrewOutput
-            if not strategist_output:
-                if hasattr(strategist_result, 'json_dict') and strategist_result.json_dict:
-                    strategist_output = strategist_result.json_dict
-                elif hasattr(strategist_result, 'raw'):
-                    strategist_output = self._parse_json_output(strategist_result.raw)
-                else:
-                    strategist_output = self._parse_json_output(str(strategist_result))
-            
-            logger.debug(f"Strategist output: {strategist_output}")
-            
+            strategist_output = _extract_task_output(strategist_task, strategist_result)
+            logger.debug("Strategist output: %s", strategist_output)
+
             if strategist_output.get("classification") == "JUNK":
                 logger.warning("❌ Iniciativa rechazada por Triage Strategist: no es estratégica")
                 return {
                     "status": "rejected",
-                    "reason": "No alineada con Focos estratégicos",
-                    "details": strategist_output
+                    "reason": strategist_output.get("reasoning", "No alineada con Focos estratégicos"),
+                    "details": strategist_output,
                 }
-            
+
             foco = strategist_output.get("foco")
-            logger.info(f"✅ Foco detectado: {foco}")
-            
-            # ── PASO 2: BUSINESS ANALYST (deduplicación + HTML) ──
+            logger.info("✅ Foco detectado: %s", foco)
+
+            # ── PASO 2 & 3: BA + RESEARCHER en threads paralelos reales ──────
+            # CrewAI sequential process always runs tasks one-by-one.
+            # True parallelism requires running two independent single-task Crews
+            # in separate threads and joining them.
             ba_cfg = self._agents_cfg.get("agents", {}).get("business_analyst", {})
-            
-            # Agregar HTMLStrategyTool al BA
-            html_tool = HTMLStrategyTool() if HTMLStrategyTool else None
-            ba_tools = [html_tool] if html_tool else []
-            
-            ba_agent = Agent(
-                role=ba_cfg.get("role", "Analista de Negocio"),
-                goal=ba_cfg.get("goal", "Documentar iniciativa sin duplicar"),
-                backstory=ba_cfg.get("backstory", ""),
-                llm=self.llm,
-                tools=ba_tools,
-                verbose=True,
-                max_iter=3,
-                allow_delegation=False,
-            )
-            
+            researcher_cfg = self._agents_cfg.get("agents", {}).get("researcher", {})
             ba_task_cfg = next(
                 (t for t in self._tasks_cfg.get("tasks", []) if t.get("id") == "strategy_document"),
                 {}
             )
-            
-            ba_task = Task(
-                description=ba_task_cfg.get("description", "Documentar iniciativa").format(
-                    initiative_input=initiative_input,
-                    foco=foco
-                ),
-                expected_output=ba_task_cfg.get("expected_result", "JSON con HTML updated"),
-                agent=ba_agent,
-            )
-            
-            # ── PASO 3: RESEARCHER (validación técnica en paralelo) ──
-            researcher_cfg = self._agents_cfg.get("agents", {}).get("researcher", {})
-            
-            # Agregar SerperDevTool al Researcher
-            serper_tool = SerperDevTool() if SerperDevTool else None
-            researcher_tools = [serper_tool] if serper_tool else []
-            
-            researcher_agent = Agent(
-                role=researcher_cfg.get("role", "Investigador Técnico"),
-                goal=researcher_cfg.get("goal", "Validar viabilidad técnica"),
-                backstory=researcher_cfg.get("backstory", ""),
-                llm=self.llm,
-                tools=researcher_tools,
-                verbose=True,
-                max_iter=2,
-                allow_delegation=False,
-            )
-            
             researcher_task_cfg = next(
                 (t for t in self._tasks_cfg.get("tasks", []) if t.get("id") == "strategy_research"),
                 {}
             )
-            
-            researcher_task = Task(
-                description=researcher_task_cfg.get("description", "Validar técnicamente").format(
-                    initiative_input=initiative_input
-                ),
-                expected_output=researcher_task_cfg.get("expected_result", "JSON con viabilidad"),
-                agent=researcher_agent,
-            )
-            
-            # ── PASO 4: EJECUTAR BA + RESEARCHER EN PARALELO ──
+
+            # Results containers (mutable so threads can write to them)
+            ba_result_box: Dict[str, Any] = {}
+            researcher_result_box: Dict[str, Any] = {}
+            ba_error_box: List[str] = []
+            researcher_error_box: List[str] = []
+
+            def _run_ba():
+                try:
+                    html_tool_instance = HTMLStrategyTool()
+                    _ba_agent = Agent(
+                        role=ba_cfg.get("role", "Analista de Negocio"),
+                        goal=ba_cfg.get("goal", "Documentar iniciativa sin duplicar"),
+                        backstory=ba_cfg.get("backstory", ""),
+                        llm=self.llm,
+                        tools=[html_tool_instance],
+                        verbose=True,
+                        max_iter=3,
+                        allow_delegation=False,
+                    )
+                    _ba_task = Task(
+                        description=ba_task_cfg.get("description", "Documentar iniciativa").format(
+                            initiative_input=initiative_input,
+                            foco=foco
+                        ),
+                        expected_output=ba_task_cfg.get("expected_result", "JSON con HTML updated"),
+                        agent=_ba_agent,
+                    )
+                    _ba_crew = Crew(agents=[_ba_agent], tasks=[_ba_task], verbose=True)
+                    _result = _ba_crew.kickoff()
+                    ba_result_box.update(_extract_task_output(_ba_task, _result))
+                except Exception as exc:
+                    logger.error("❌ BA thread error: %s", exc)
+                    ba_error_box.append(str(exc))
+
+            def _run_researcher():
+                try:
+                    # Use SerperDevTool if available, otherwise run without search tool
+                    _researcher_tools = []
+                    if SerperDevTool is not None:
+                        try:
+                            _researcher_tools = [SerperDevTool()]
+                        except Exception as st_exc:
+                            logger.warning("SerperDevTool instantiation failed: %s", st_exc)
+
+                    _researcher_agent = Agent(
+                        role=researcher_cfg.get("role", "Investigador Técnico"),
+                        goal=researcher_cfg.get("goal", "Validar viabilidad técnica"),
+                        backstory=researcher_cfg.get("backstory", ""),
+                        llm=self.llm,
+                        tools=_researcher_tools,
+                        verbose=True,
+                        max_iter=2,
+                        allow_delegation=False,
+                    )
+                    _researcher_task = Task(
+                        description=researcher_task_cfg.get("description", "Validar técnicamente").format(
+                            initiative_input=initiative_input
+                        ),
+                        expected_output=researcher_task_cfg.get("expected_result", "JSON con viabilidad"),
+                        agent=_researcher_agent,
+                    )
+                    _researcher_crew = Crew(agents=[_researcher_agent], tasks=[_researcher_task], verbose=True)
+                    _result = _researcher_crew.kickoff()
+                    researcher_result_box.update(_extract_task_output(_researcher_task, _result))
+                except Exception as exc:
+                    logger.error("❌ Researcher thread error: %s", exc)
+                    researcher_error_box.append(str(exc))
+
             logger.info("📝 Paso 2: Business Analyst + Researcher trabajando en paralelo…")
-            
-            parallel_crew = Crew(
-                agents=[ba_agent, researcher_agent],
-                tasks=[ba_task, researcher_task],
-                verbose=True,
-            )
-            
-            parallel_result = parallel_crew.kickoff()
-            
-            # Parsear resultados: usar task.output.raw (solo el Final Answer, sin verbose frame)
-            ba_output = {}
-            researcher_output = {}
-            
-            if hasattr(ba_task, 'output') and ba_task.output:
-                t_out = ba_task.output
-                if hasattr(t_out, 'json_dict') and t_out.json_dict:
-                    ba_output = t_out.json_dict
-                elif hasattr(t_out, 'raw') and t_out.raw:
-                    ba_output = self._parse_json_output(t_out.raw)
-            
-            if hasattr(researcher_task, 'output') and researcher_task.output:
-                t_out = researcher_task.output
-                if hasattr(t_out, 'json_dict') and t_out.json_dict:
-                    researcher_output = t_out.json_dict
-                elif hasattr(t_out, 'raw') and t_out.raw:
-                    researcher_output = self._parse_json_output(t_out.raw)
-            
-            logger.info(f"✅ BA completado: {ba_output.get('action', 'unknown')}")
-            logger.info(f"✅ Researcher completado: viable={researcher_output.get('viable', 'unknown')}")
-            
+            ba_thread = threading.Thread(target=_run_ba, daemon=True)
+            researcher_thread = threading.Thread(target=_run_researcher, daemon=True)
+            ba_thread.start()
+            researcher_thread.start()
+            ba_thread.join(timeout=300)       # 5-minute hard limit per agent
+            researcher_thread.join(timeout=300)
+
+            if ba_thread.is_alive():
+                logger.warning("⚠️ BA thread timed out after 300s — using empty output")
+            if researcher_thread.is_alive():
+                logger.warning("⚠️ Researcher thread timed out after 300s — using empty output")
+
+            ba_output: Dict[str, Any] = ba_result_box
+            researcher_output: Dict[str, Any] = researcher_result_box
+
+            logger.info("✅ BA completado: %s", ba_output.get('action', 'unknown'))
+            logger.info("✅ Researcher completado: viable=%s", researcher_output.get('viable', 'unknown'))
+
             # ── FALLBACK PROGRAMÁTICO: garantizar escritura real en HTML ──────
-            # El agente LLM puede reportar html_updated=True sin haber llamado
-            # realmente al tool. Verificamos directamente y escribimos si falta.
             ba_output = self._ensure_html_written(
                 ba_output=ba_output,
                 initiative_input=initiative_input,
                 foco=foco,
                 researcher_output=researcher_output,
             )
-            
-            # ── PASO 5: COORDINATOR (aprobación final) ──
+
+            # ── PASO 4: COORDINATOR (aprobación final) ────────────────────────
             coordinator_cfg = self._agents_cfg.get("agents", {}).get("coordinator", {})
-            
             coordinator_agent = Agent(
                 role=coordinator_cfg.get("role", "Coordinador Estratégico"),
                 goal=coordinator_cfg.get("goal", "Aprobar resultado final"),
@@ -959,23 +962,18 @@ class TriageCrew:
                 max_iter=1,
                 allow_delegation=False,
             )
-            
             coordinator_task_cfg = next(
                 (t for t in self._tasks_cfg.get("tasks", []) if t.get("id") == "strategy_coordinate"),
                 {}
             )
-            
-            approval_input = f"""
-Iniciativa: {initiative_input}
-
-Resultados del crew:
-- Foco: {foco}
-- BA: {json.dumps(ba_output, ensure_ascii=False)}
-- Researcher: {json.dumps(researcher_output, ensure_ascii=False)}
-
-¿Aprobar escritura al HTML SSOT?
-"""
-            
+            approval_input = (
+                f"Iniciativa: {initiative_input}\n\n"
+                f"Resultados del crew:\n"
+                f"- Foco: {foco}\n"
+                f"- BA: {json.dumps(ba_output, ensure_ascii=False)}\n"
+                f"- Researcher: {json.dumps(researcher_output, ensure_ascii=False)}\n\n"
+                f"¿Aprobar escritura al HTML SSOT?"
+            )
             coordinator_task = Task(
                 description=coordinator_task_cfg.get("description", "Aprobar resultado").format(
                     initiative_input=approval_input
@@ -983,39 +981,20 @@ Resultados del crew:
                 expected_output=coordinator_task_cfg.get("expected_result", "JSON con aprobación"),
                 agent=coordinator_agent,
             )
-            
             coordinator_crew = Crew(
                 agents=[coordinator_agent],
                 tasks=[coordinator_task],
                 verbose=True,
             )
-            
             logger.info("🎯 Paso 3: Coordinator revisando resultado…")
             coordinator_result = coordinator_crew.kickoff()
-            
-            # Parsear resultado: usar coordinator_task.output.raw (Final Answer puro)
-            coordinator_output = {}
-            if hasattr(coordinator_task, 'output') and coordinator_task.output:
-                t_out = coordinator_task.output
-                if hasattr(t_out, 'json_dict') and t_out.json_dict:
-                    coordinator_output = t_out.json_dict
-                elif hasattr(t_out, 'raw') and t_out.raw:
-                    coordinator_output = self._parse_json_output(t_out.raw)
-            # Fallback: CrewOutput
-            if not coordinator_output:
-                if hasattr(coordinator_result, 'json_dict') and coordinator_result.json_dict:
-                    coordinator_output = coordinator_result.json_dict
-                elif hasattr(coordinator_result, 'raw'):
-                    coordinator_output = self._parse_json_output(coordinator_result.raw)
-                else:
-                    coordinator_output = self._parse_json_output(str(coordinator_result))
-            
-            logger.debug(f"Coordinator output: {coordinator_output}")
-            
-            # Determinar aprobación: parse del Coordinator O fallback si HTML fue escrito
+            coordinator_output = _extract_task_output(coordinator_task, coordinator_result)
+            logger.debug("Coordinator output: %s", coordinator_output)
+
+            # Aprobación: Coordinator dice APPROVED, o el HTML ya fue escrito (fallback)
             coordinator_approved = coordinator_output.get("action") == "APPROVED"
             html_was_written = ba_output.get("html_updated", False)
-            
+
             if coordinator_approved or html_was_written:
                 if not coordinator_approved:
                     logger.info("✅ Coordinator no parseado pero HTML ya escrito — aprobando por fallback")
@@ -1028,22 +1007,24 @@ Resultados del crew:
                     "initiative_id": ba_output.get("initiative_id"),
                     "technical_validation": researcher_output,
                     "html_updated": html_was_written,
-                    "message": "Iniciativa procesada exitosamente por Multi-Agent Strategy Crew"
+                    "message": "Iniciativa procesada exitosamente por Multi-Agent Strategy Crew",
                 }
             else:
-                logger.warning(f"⚠️ Iniciativa RECHAZADA: {coordinator_output.get('message')}")
+                reason = coordinator_output.get("message") or coordinator_output.get("reason", "No aprobado por Coordinator")
+                logger.warning("⚠️ Iniciativa RECHAZADA: %s", reason)
                 return {
                     "status": "rejected",
-                    "reason": coordinator_output.get("message", "No aprobado por Coordinator"),
-                    "details": coordinator_output
+                    "reason": reason,
+                    "details": coordinator_output,
                 }
-                
+
         except Exception as exc:
-            logger.error(f"❌ Error en Multi-Agent Strategy Crew: {exc}")
+            logger.error("❌ Error en Multi-Agent Strategy Crew: %s", exc)
             return {
                 "status": "error",
-                "message": str(exc)
+                "message": str(exc),
             }
+
     
     @staticmethod
     def _parse_json_output(text: str) -> Dict[str, Any]:

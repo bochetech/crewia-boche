@@ -406,6 +406,9 @@ class HTMLStrategyTool(BaseTool):
             
             self._save_soup(soup)
             
+            # Index new initiative in strategy search collection
+            self._index_initiative(initiative_data['id'], initiative_data)
+            
             return json.dumps({
                 "status": "ok",
                 "action": "created",
@@ -421,6 +424,44 @@ class HTMLStrategyTool(BaseTool):
                 "message": str(exc)
             })
     
+    def _index_initiative(self, initiative_id: str, initiative_data: dict) -> None:
+        """Add or update one initiative in the strategy ChromaDB collection."""
+        try:
+            from src.conversation_memory import _get_chroma_client, _get_encoder
+            client = _get_chroma_client()
+            STRATEGY_COLLECTION = "strategy_initiatives_cosine"
+            try:
+                col = client.get_collection(STRATEGY_COLLECTION)
+            except Exception:
+                col = client.create_collection(
+                    name=STRATEGY_COLLECTION,
+                    metadata={"hnsw:space": "cosine"},
+                )
+            encoder = _get_encoder()
+            text_parts = [
+                initiative_data.get('title', ''),
+                initiative_data.get('objective', ''),
+                initiative_data.get('impact', ''),
+            ]
+            text_blob = " ".join(t for t in text_parts if t)
+            if not text_blob.strip():
+                return
+            embedding = encoder.encode(text_blob).tolist()
+            # upsert: delete if exists, then add
+            try:
+                col.delete(ids=[initiative_id])
+            except Exception:
+                pass
+            col.add(
+                embeddings=[embedding],
+                documents=[text_blob],
+                metadatas=[{"initiative_id": initiative_id, "title": initiative_data.get('title', '')}],
+                ids=[initiative_id],
+            )
+            logger.debug("Indexed initiative %s in strategy collection", initiative_id)
+        except Exception as exc:
+            logger.warning("Could not index initiative %s: %s", initiative_id, exc)
+
     def _search_similar(self, query: str, threshold: float = 0.85) -> str:
         """Search for similar initiatives using semantic similarity.
         
@@ -434,15 +475,36 @@ class HTMLStrategyTool(BaseTool):
             JSON string with matching initiatives
         """
         try:
-            from src.conversation_memory import create_user_memory
+            from src.conversation_memory import _get_chroma_client, _get_encoder
             
-            # Use strategy-specific memory collection
-            memory = create_user_memory("strategy_initiatives", max_topics=50)
+            client = _get_chroma_client()
             
-            # Query ChromaDB
-            results = memory.collection.query(
-                query_texts=[query],
-                n_results=5
+            # Use a dedicated collection for strategy initiatives with cosine distance
+            # so that similarity = 1 - distance is mathematically correct.
+            STRATEGY_COLLECTION = "strategy_initiatives_cosine"
+            try:
+                strategy_collection = client.get_collection(STRATEGY_COLLECTION)
+            except Exception:
+                strategy_collection = client.create_collection(
+                    name=STRATEGY_COLLECTION,
+                    metadata={"hnsw:space": "cosine"},  # ensures distance ∈ [0,1] and similarity = 1-distance
+                )
+                logger.info("Created strategy collection '%s' with cosine space", STRATEGY_COLLECTION)
+                # Seed the collection from existing HTML initiatives
+                self._seed_strategy_collection(strategy_collection)
+            
+            # If empty, seed from HTML
+            if strategy_collection.count() == 0:
+                self._seed_strategy_collection(strategy_collection)
+            
+            # Encode query
+            encoder = _get_encoder()
+            query_embedding = encoder.encode(query).tolist()
+            
+            results = strategy_collection.query(
+                query_embeddings=[query_embedding],
+                n_results=min(5, strategy_collection.count()),
+                include=["documents", "metadatas", "distances"],
             )
             
             if not results or not results['ids'] or len(results['ids'][0]) == 0:
@@ -453,11 +515,11 @@ class HTMLStrategyTool(BaseTool):
                     "message": "No similar initiatives found"
                 })
             
-            # Convert distances to similarities and filter by threshold
+            # Convert cosine distances to similarities (valid because hnsw:space=cosine)
             matches = []
             for i, doc_id in enumerate(results['ids'][0]):
                 distance = results['distances'][0][i]
-                similarity = 1 - distance  # ChromaDB returns L2 distance, convert to similarity
+                similarity = 1.0 - distance  # correct for cosine space
                 
                 if similarity >= threshold:
                     metadata = results['metadatas'][0][i] if results.get('metadatas') else {}
@@ -486,6 +548,41 @@ class HTMLStrategyTool(BaseTool):
                 "message": str(exc),
                 "action": "NUEVA_INICIATIVA"  # Fallback: create new if search fails
             })
+
+    def _seed_strategy_collection(self, collection) -> None:
+        """Seed the strategy collection with all initiatives currently in the HTML file."""
+        try:
+            from src.conversation_memory import _get_encoder
+            encoder = _get_encoder()
+            soup = self._load_soup()
+            seeded = 0
+            for div in soup.find_all('div', class_='initiative'):
+                initiative_id = div.get('id', '')
+                if not initiative_id:
+                    continue
+                title_elem = div.find('h3')
+                title = title_elem.get_text(strip=True) if title_elem else ""
+                # Build a text blob for embedding
+                text_parts = [title]
+                for p in div.find_all('p'):
+                    text_parts.append(p.get_text(strip=True))
+                text_blob = " ".join(t for t in text_parts if t)
+                if not text_blob.strip():
+                    continue
+                embedding = encoder.encode(text_blob).tolist()
+                try:
+                    collection.add(
+                        embeddings=[embedding],
+                        documents=[text_blob],
+                        metadatas=[{"initiative_id": initiative_id, "title": title}],
+                        ids=[initiative_id],
+                    )
+                    seeded += 1
+                except Exception:
+                    pass  # Already exists, skip
+            logger.info("Seeded strategy collection with %d initiatives from HTML", seeded)
+        except Exception as exc:
+            logger.warning("Could not seed strategy collection: %s", exc)
     
     def _list_all_initiatives(self) -> str:
         """List all initiatives in HTML SSOT.
