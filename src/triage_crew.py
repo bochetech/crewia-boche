@@ -1256,27 +1256,20 @@ class TriageCrew:
             logger.info("Using LLM for conversation: %s", type(self.llm).__name__)
             
             # System prompt con personalidad de Nia (analista estratégica Descorcha)
-            system_prompt = """Eres Nia, la analista estratégica de Descorcha.
+            system_prompt = """Eres Nia, la asistente estratégica de Descorcha. Respondes en español.
 
-Tu personalidad:
-- Profesional, directa y estratégica
-- Orientada a la acción (propones siguiente paso concreto)
-- Basas tus respuestas en datos y memoria de conversaciones
-- SIEMPRE consultas tu memoria antes de responder
-- Reconoces cuando NO sabes algo (no inventas)
-
-Contexto organizacional:
-- Descorcha: empresa de ecommerce y experiencias (viñas, turismo)
-- Foco estratégico: transformación digital, integraciones SAP/Bókun/Shopify, 3PLs
-- Rol técnico: validar propuestas, documentar en Confluence, coordinar con CTO
+MODO CONVERSACIONAL — guía de comportamiento:
+- Si el mensaje es un saludo ("hola", "buenos días", "¿qué tal?", etc.): responde con UN saludo breve y natural, sin elaborar.
+- Si es una pregunta concreta: responde directamente y de forma concisa.
+- Si es una solicitud de tarea o análisis: pregunta por los detalles que necesitas.
+- NUNCA asumas contexto de trabajo si el usuario no lo ha mencionado en este hilo.
+- NUNCA inventes temas, proyectos o integraciones que el usuario no haya mencionado.
 
 Reglas de respuesta:
-1. Usa las "CONVERSACIONES PREVIAS" para informar tu respuesta (pero no las copies literalmente)
-2. Refiere el contexto naturalmente: "Retomando lo que hablamos sobre X..." o "Según la conversación anterior..."
-3. Si NO tienes información relevante → "No encuentro esa conversación, ¿puedes darme más contexto?"
-4. Responde DIRECTAMENTE al usuario (no formatees metadata ni hagas listas de "Tema:", "Contexto:", etc.)
-5. Mantén respuestas concisas (2-3 párrafos máximo)
-6. Ofrece acción concreta al final"""
+1. Usa las "CONVERSACIONES PREVIAS" solo si son relevantes para lo que el usuario acaba de decir.
+2. Responde DIRECTAMENTE al usuario. Sin listas de metadatos ni etiquetas internas.
+3. Máximo 3 oraciones para saludos o preguntas simples. 2-3 párrafos para temas complejos.
+4. Si no tienes información relevante → pregunta brevemente por contexto."""
 
             # Construir prompt con contexto conversacional (corto plazo)
             short_term_context = ""
@@ -1286,34 +1279,53 @@ Reglas de respuesta:
                     f"{msg.get('role', 'user').capitalize()}: {msg.get('content', '')[:150]}"
                     for msg in recent
                 ])
-            
+
+            # ── PASO 2.3: DETECTAR SALUDO / CHIT-CHAT ──────────────────────────
+            # Si el mensaje es puramente conversacional, NO activar strategy_crew
+            _greeting_patterns = [
+                r"^hola\b", r"^buenos?\s+d[ií]as?\b", r"^buenas?\s+tardes?\b",
+                r"^buenas?\s+noches?\b", r"^hey\b", r"^qu[eé]\s+tal\b",
+                r"^c[oó]mo\s+est[aá]s?\b", r"^todo\s+bien\b", r"^hola\s+n[ií]a\b",
+                r"^hi\b", r"^hello\b",
+            ]
+            import re as _re_greet
+            _msg_stripped = user_message_lower.strip().rstrip("!?.¿¡")
+            is_greeting = any(
+                _re_greet.search(pat, _msg_stripped)
+                for pat in _greeting_patterns
+            ) or len(user_message.split()) <= 3 and not any(
+                c in user_message_lower for c in ["?", "qué", "cuál", "cómo", "cuando", "dónde"]
+            )
+
             # ── PASO 2.5: DETECTAR INICIATIVA ESTRATÉGICA ──────────────────────
             # Si el mensaje contiene keywords de iniciativas, activar multi-agent crew
             initiative_keywords = [
                 # Acciones estratégicas
-                "implementar", "integrar", "desarrollar", "crear", "ajustar",
-                "optimizar", "mejorar", "automatizar", "migrar", "rediseñar",
-                # Sistemas/tecnologías
-                "api", "sistema", "plataforma", "integración", "integracion",
+                "implementar", "integrar", "desarrollar", "ajustar",
+                "optimizar", "automatizar", "migrar", "rediseñar",
+                # Sistemas/tecnologías (solo si acompañan una acción)
                 "shopify", "sap", "bokun", "bókun", "3pl", "carrier",
                 # Decisiones estratégicas
                 "propuesta", "iniciativa", "proyecto", "requerimiento",
                 "estrategia", "roadmap", "prioridad"
             ]
-            
-            # NUEVA LÓGICA: detectar comandos explícitos de registro
+
+            # Comandos explícitos de registro
             registration_triggers = [
                 "registrar", "registra", "documenta", "documentar",
                 "agrega", "agregar", "añade", "añadir",
                 "crea la iniciativa", "crear iniciativa"
             ]
-            
+
             explicit_registration = any(trigger in user_message_lower for trigger in registration_triggers)
-            
-            # Detectar si hay iniciativa en el mensaje actual O si se pide registro explícito
+
+            # Detectar si hay iniciativa — los saludos nunca son iniciativas
             is_strategic_initiative = (
-                any(kw in user_message_lower for kw in initiative_keywords) or
-                explicit_registration
+                not is_greeting
+                and (
+                    any(kw in user_message_lower for kw in initiative_keywords)
+                    or explicit_registration
+                )
             )
             
             # Si se pide registro pero no hay iniciativa en el mensaje actual,
@@ -1396,14 +1408,15 @@ Nia (responde de forma concisa y directa):"""
                 api_key = getattr(self.llm, 'api_key', 'lm-studio')
                 
                 # Llamada usando litellm directamente
-                # max_tokens alto para que el modelo de reasoning termine el <think> y genere content
+                # max_tokens reducido para conversaciones cortas y evitar reasoning excesivo
                 response = litellm.completion(
                     model=model,
                     messages=[{"role": "user", "content": prompt}],
                     base_url=base_url,
                     api_key=api_key,
                     temperature=0.7,
-                    max_tokens=2000,
+                    max_tokens=500,
+                    extra_body={"thinking": {"budget_tokens": 0}},
                 )
                 
                 msg = response.choices[0].message
