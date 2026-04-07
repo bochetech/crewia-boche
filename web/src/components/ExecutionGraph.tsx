@@ -95,12 +95,12 @@ function buildGraph(
   execution: ExecutionRecord | null,
   onSelectAgent: (id: string) => void,
 ): { nodes: Node[]; edges: Edge[] } {
-  // Default fallback: the legacy 4-agent strategy flow
+  // Default fallback: the real strategy_crew steps (matching flows.yaml agent IDs)
   const defaultSteps = [
-    { agent_id: 'strategist', task_id: 'strategy_classify', label: 'Clasificar Foco', parallel_group: null },
-    { agent_id: 'ba',         task_id: 'strategy_document', label: 'Documentar HTML', parallel_group: 'analysis' },
-    { agent_id: 'researcher', task_id: 'strategy_research', label: 'Validar Técnico',  parallel_group: 'analysis' },
-    { agent_id: 'coordinator',task_id: 'strategy_coordinate',label: 'Aprobar',        parallel_group: null },
+    { agent_id: 'triage_strategist', task_id: 'strategy_classify', label: 'Clasificar Foco',  parallel_group: null },
+    { agent_id: 'business_analyst',  task_id: 'strategy_document', label: 'Documentar HTML',  parallel_group: 'analysis' },
+    { agent_id: 'researcher',        task_id: 'strategy_research', label: 'Validar Técnico',   parallel_group: 'analysis' },
+    { agent_id: 'coordinator',       task_id: 'strategy_coordinate', label: 'Aprobar',         parallel_group: null },
   ];
   const steps = (flow?.steps?.length ?? 0) > 0 ? flow!.steps : defaultSteps;
 

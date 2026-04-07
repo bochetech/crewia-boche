@@ -13,14 +13,18 @@ export default function RunPage() {
   const [selectedAgent, setSelectedAgent]   = useState<string | null>(null);
   const [loading, setLoading]               = useState(false);
   const [flows, setFlows]                   = useState<Flow[]>([]);
+  const [flowsLoading, setFlowsLoading]     = useState(true);
   const [selectedFlowId, setSelectedFlowId] = useState<string>('');
   const wsRef = useRef<WebSocket | null>(null);
 
   useEffect(() => {
-    listFlows().then(f => {
-      setFlows(f);
-      if (f.length > 0) setSelectedFlowId(f[0].id);
-    }).catch(console.error);
+    listFlows()
+      .then(f => {
+        setFlows(f);
+        if (f.length > 0) setSelectedFlowId(f[0].id);
+      })
+      .catch(console.error)
+      .finally(() => setFlowsLoading(false));
   }, []);
 
   const activeFlow = flows.find(f => f.id === selectedFlowId) ?? null;
@@ -74,28 +78,36 @@ export default function RunPage() {
       </div>
 
       <div className="space-y-3">
-        {/* Flow selector */}
-        {flows.length > 0 && (
-          <div className="flex items-center gap-3">
-            <GitFork className="h-4 w-4 text-primary shrink-0" />
-            <label className="text-sm text-muted-foreground shrink-0">Flujo:</label>
-            <select
-              value={selectedFlowId}
-              onChange={e => setSelectedFlowId(e.target.value)}
-              disabled={loading}
-              className="rounded-md border border-border bg-secondary px-3 py-1.5 text-sm focus:outline-none focus:ring-1 focus:ring-primary"
-            >
-              {flows.map(f => (
-                <option key={f.id} value={f.id}>{f.name}</option>
-              ))}
-            </select>
-            {activeFlow?.goal && (
-              <span className="text-xs text-muted-foreground truncate max-w-xs">
-                {activeFlow.goal.slice(0, 80)}…
-              </span>
-            )}
-          </div>
-        )}
+        {/* Flow selector — always visible */}
+        <div className="flex items-center gap-3 rounded-lg border border-border bg-secondary/40 px-4 py-2.5">
+          <GitFork className="h-4 w-4 text-primary shrink-0" />
+          <label className="text-sm font-medium shrink-0">Flujo:</label>
+          {flowsLoading ? (
+            <span className="text-sm text-muted-foreground">Cargando flujos…</span>
+          ) : flows.length === 0 ? (
+            <span className="text-sm text-destructive">
+              No se pudieron cargar los flujos — ¿está el backend corriendo?
+            </span>
+          ) : (
+            <>
+              <select
+                value={selectedFlowId}
+                onChange={e => setSelectedFlowId(e.target.value)}
+                disabled={loading}
+                className="rounded-md border border-border bg-card px-3 py-1.5 text-sm focus:outline-none focus:ring-1 focus:ring-primary"
+              >
+                {flows.map(f => (
+                  <option key={f.id} value={f.id}>{f.name}</option>
+                ))}
+              </select>
+              {activeFlow?.goal && (
+                <span className="text-xs text-muted-foreground truncate">
+                  {activeFlow.goal.trim().slice(0, 90)}{activeFlow.goal.length > 90 ? '…' : ''}
+                </span>
+              )}
+            </>
+          )}
+        </div>
 
         <div className="flex gap-3">
           <textarea
