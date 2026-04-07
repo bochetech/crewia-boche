@@ -40,3 +40,7 @@ htmlcov/
 
 # Notebook checkpoints
 .ipynb_checkpoints
+web/node_modules/
+web/.next/
+test_result.log
+data/chroma/

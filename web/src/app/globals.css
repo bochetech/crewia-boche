@@ -1,0 +1,60 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --background: 222 47% 6%;
+    --foreground: 210 40% 98%;
+    --card: 222 47% 9%;
+    --card-foreground: 210 40% 98%;
+    --popover: 222 47% 9%;
+    --popover-foreground: 210 40% 98%;
+    --primary: 238 82% 63%;
+    --primary-foreground: 0 0% 100%;
+    --secondary: 222 47% 14%;
+    --secondary-foreground: 210 40% 98%;
+    --muted: 222 47% 14%;
+    --muted-foreground: 215 20% 55%;
+    --accent: 238 82% 63%;
+    --accent-foreground: 0 0% 100%;
+    --destructive: 0 84% 60%;
+    --destructive-foreground: 210 40% 98%;
+    --border: 222 47% 16%;
+    --input: 222 47% 14%;
+    --ring: 238 82% 63%;
+    --radius: 0.6rem;
+  }
+}
+
+@layer base {
+  * { @apply border-border; }
+  body {
+    @apply bg-background text-foreground;
+    font-feature-settings: "rlig" 1, "calt" 1;
+  }
+}
+
+/* React Flow custom styles */
+.react-flow__node {
+  border-radius: var(--radius);
+}
+.react-flow__edge-path {
+  stroke: hsl(238 82% 63% / 0.5);
+  stroke-width: 2;
+}
+.react-flow__edge.selected .react-flow__edge-path,
+.react-flow__edge:hover .react-flow__edge-path {
+  stroke: hsl(238 82% 63%);
+}
+.react-flow__background {
+  background-color: hsl(222 47% 6%);
+}
+.react-flow__controls button {
+  background: hsl(222 47% 14%);
+  border-color: hsl(222 47% 16%);
+  color: hsl(210 40% 98%);
+}
+.react-flow__minimap {
+  background: hsl(222 47% 9%);
+}
