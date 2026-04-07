@@ -1141,7 +1141,7 @@ Resultados del crew:
                     email_summary=EmailSummary(
                         sender=_stub_extract_metadata(email_entrante).get("sender", "unknown"),
                         subject=_stub_extract_metadata(email_entrante).get("subject", ""),
-                        key_topics=[strategy_result.get('foco', ''), strategy_result.get('action', '')]
+                        key_topics=[t for t in [strategy_result.get('foco'), strategy_result.get('action')] if t is not None]
                     ),
                     actions_taken=[
                         ActionRecord(
