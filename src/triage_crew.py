@@ -1396,64 +1396,27 @@ Nia (responde de forma concisa y directa):"""
             print(prompt[:500])
             print(f"{'='*80}\n")
             
-            # Llamada al LLM usando litellm (CrewAI usa litellm internamente)
+            # Llamada al LLM usando la API nativa de LM Studio (/api/v1/chat)
+            # Esto permite control explícito de reasoning via el campo "reasoning".
             logger.info("Calling LLM with prompt length: %d", len(prompt))
-            
+
             try:
-                import litellm
-                
-                # Extraer configuración del LLM de CrewAI
-                model = self.llm.model  # "openai/lmstudio-model"
-                base_url = getattr(self.llm, 'base_url', 'http://localhost:1234/v1')
-                api_key = getattr(self.llm, 'api_key', 'lm-studio')
-                
-                # Llamada usando litellm directamente
-                # max_tokens reducido para conversaciones cortas y evitar reasoning excesivo
-                response = litellm.completion(
-                    model=model,
-                    messages=[{"role": "user", "content": prompt}],
-                    base_url=base_url,
-                    api_key=api_key,
-                    temperature=0.7,
-                    max_tokens=500,
-                    extra_body={"thinking": {"budget_tokens": 0}},
+                from src.lmstudio_litellm import build_lmstudio_llm
+
+                # Construir cliente nativo con reasoning="off" para conversaciones
+                # LM Studio soporta: "off"|"low"|"medium"|"high"|"on"
+                # Para un saludo o pregunta simple → "off" (sin pensar, respuesta directa)
+                # Para análisis o preguntas complejas → "low" (pensamiento mínimo)
+                reasoning_level = "off" if is_greeting else "low"
+
+                lm = build_lmstudio_llm(
+                    enable_reasoning=False,  # base: sin reasoning
+                    max_tokens=300 if is_greeting else 500,
                 )
-                
-                msg = response.choices[0].message
-                result = msg.content or ""
-                
-                # Modelos con reasoning (Gemma, QwQ, DeepSeek-R1, etc.) ponen el texto final
-                # en `content` y el razonamiento en `reasoning_content`.
-                # Si content está vacío, intentar extraer desde reasoning_content como fallback.
-                if not result or not result.strip():
-                    reasoning = getattr(msg, 'reasoning_content', None) or ""
-                    if reasoning:
-                        # El razonamiento terminó sin generar respuesta: re-intentar sin reasoning
-                        logger.warning("content vacío, re-intentando con budget_tokens=0 para forzar respuesta")
-                        try:
-                            response2 = litellm.completion(
-                                model=model,
-                                messages=[
-                                    {"role": "user", "content": prompt},
-                                ],
-                                base_url=base_url,
-                                api_key=api_key,
-                                temperature=0.7,
-                                max_tokens=600,
-                                extra_body={"thinking": {"type": "disabled"}},
-                            )
-                            result = response2.choices[0].message.content or ""
-                        except Exception:
-                            pass
-                        # Si aún vacío, usar el final del reasoning como respuesta
-                        if not result or not result.strip():
-                            # Extraer solo la parte después del bloque de pensamiento
-                            import re as _re
-                            cleaned_reasoning = _re.sub(
-                                r'(?:Thinking Process|thinking|<think>).*?(?:</think>|\n\n(?=[A-ZÁÉÍÓÚÑ¡]))',
-                                '', reasoning, flags=_re.DOTALL | _re.IGNORECASE
-                            ).strip()
-                            result = cleaned_reasoning[:800] if cleaned_reasoning else reasoning[-800:]
+                # Sobrescribir reasoning según tipo de mensaje
+                lm.reasoning = reasoning_level
+
+                result = lm(prompt)
                 
                 logger.info("LLM returned result length: %d", len(result) if result else 0)
                 
