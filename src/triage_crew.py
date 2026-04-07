@@ -631,6 +631,11 @@ class TriageCrew:
 
         Returns the (possibly updated) ba_output dict, always with a real
         initiative_id and html_updated=True on success.
+        
+        Guards:
+        - If ba_output has no meaningful content (title is generic placeholder),
+          skip writing — the agent did not produce useful data.
+        - Use a lower similarity threshold (0.7) to avoid near-duplicates.
         """
         from src.strategy_tools.html_strategy_tool import HTMLStrategyTool
 
@@ -638,7 +643,6 @@ class TriageCrew:
 
         # 1. Determine the initiative_id the agent claimed to have written
         initiative_id = ba_output.get("initiative_id", "")
-        action = ba_output.get("action", "NUEVA_INICIATIVA")
 
         # 2. Check if it actually exists in the HTML
         already_written = False
@@ -656,12 +660,41 @@ class TriageCrew:
         print("\n⚠️  [ensure_html_written] Escritura programática al HTML (el agente no llamó al tool)\n")
 
         # Build initiative_data from BA output or sensible defaults
-        content = ba_output.get("content", {})
+        content = ba_output.get("content", {}) or {}
         safe_foco = foco if foco in ("F1", "F2", "F3", "F4") else "F4"
 
-        # Search for duplicates first
+        # ── GUARD: no escribir si no hay contenido real ───────────────────────
+        # Si el BA no generó datos significativos (título es genérico o vacío),
+        # significa que el parser falló y no hay información útil para escribir.
+        title_candidate = (
+            content.get("title")
+            or ba_output.get("title")
+            or ""
+        ).strip()
+        is_generic_title = (
+            not title_candidate
+            or title_candidate.lower().startswith("iniciativa estratégica (")
+            or title_candidate.lower() == "tbd"
+        )
+        has_objective = bool(
+            content.get("objective")
+            or ba_output.get("objective")
+            or ""
+        )
+
+        if is_generic_title and not has_objective:
+            logger.warning(
+                "⚠️ [ensure_html_written] BA output sin contenido real (título genérico, sin objetivo). "
+                "Omitiendo escritura para evitar entrada vacía."
+            )
+            ba_output["html_updated"] = False
+            ba_output["skip_reason"] = "no_content"
+            return ba_output
+
+        # ── SEARCH for duplicates with a lower threshold ──────────────────────
+        # Use 0.7 instead of 0.85 to catch near-duplicates with slightly different wording
         search_result = json.loads(
-            html_tool._run(action="search", query=initiative_input[:300], threshold=0.85)
+            html_tool._run(action="search", query=initiative_input[:300], threshold=0.7)
         )
         matches = search_result.get("matches", [])
 
@@ -669,10 +702,11 @@ class TriageCrew:
             # UPDATE existing initiative
             best_match = matches[0]
             existing_id = best_match.get("initiative_id", "")
-            logger.info("[ensure_html_written] Duplicado encontrado: %s — actualizando", existing_id)
+            similarity = best_match.get("similarity", 0)
+            logger.info("[ensure_html_written] Duplicado encontrado: %s (sim=%.2f) — actualizando", existing_id, similarity)
 
             new_content = {
-                "title": content.get("title") or f"Iniciativa estratégica ({safe_foco})",
+                "title": title_candidate or f"Iniciativa estratégica ({safe_foco})",
                 "objective": content.get("objective") or initiative_input[:200],
                 "impact": content.get("impact") or researcher_output.get("effort_estimate", "TBD"),
                 "owner": content.get("owner") or "TBD",
@@ -697,7 +731,7 @@ class TriageCrew:
         else:
             # CREATE new initiative
             initiative_data = {
-                "title": content.get("title") or f"Iniciativa estratégica ({safe_foco})",
+                "title": title_candidate or f"Iniciativa estratégica ({safe_foco})",
                 "status": content.get("status") or "Planificado",
                 "objective": content.get("objective") or initiative_input[:200],
                 "impact": content.get("impact") or "TBD",
