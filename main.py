@@ -7,6 +7,7 @@ email       Interactive: type/paste an email and triage it.
 chat        Interactive: type a chat message and triage it.
 inbox       Enqueue one sample of each channel and poll via run_triage_from_inboxes().
 telegram    Start the Telegram bot (requires TELEGRAM_BOT_TOKEN in .env).
+meeting     Transcribe + analyse a meeting recording (mp4, m4a, mp3, wav, …).
 --email TXT Pass a raw email/message text directly (non-interactive).
 
 Usage
@@ -25,6 +26,12 @@ Usage
 
     # Telegram bot (get token from @BotFather, add to .env as TELEGRAM_BOT_TOKEN)
     .venv313/bin/python3 main.py --mode telegram
+
+    # Transcribe + analyse a meeting recording
+    .venv313/bin/python3 main.py --mode meeting --file reunion.mp4
+    .venv313/bin/python3 main.py --mode meeting --file reunion.mp4 --whisper-model small
+    .venv313/bin/python3 main.py --mode meeting --file reunion.mp4 --flow strategy_crew
+    .venv313/bin/python3 main.py --mode meeting --file reunion.mp4 --save-only
 
     # Pass raw text directly
     .venv313/bin/python3 main.py --email "De: x@y.com\\nAsunto: Shopify\\n\\nPropuesta..."
@@ -271,18 +278,66 @@ def mode_telegram() -> None:
     channel.run()   # blocking — python-telegram-bot manages its own event loop
 
 
+# ---------------------------------------------------------------------------
+# Meeting mode
+# ---------------------------------------------------------------------------
+
+def mode_meeting(
+    file: str,
+    whisper_model: str = "base",
+    flow_id: str | None = None,
+    save_only: bool = False,
+    output_file: str | None = None,
+) -> None:
+    """Transcribe and analyse a meeting recording with Whisper + Nia."""
+    from pathlib import Path
+    from src.nia.agent import NiaAgent, NiaConfig
+    from src.nia.channels.meeting_channel import MeetingChannel
+
+    # Build a lightweight NiaAgent (no Telegram token needed)
+    nia_cfg = NiaConfig.from_yaml()
+    try:
+        from src.triage_crew import TriageCrew
+        crew = TriageCrew()
+    except Exception:
+        crew = None
+
+    nia = NiaAgent(config=nia_cfg, crew=crew)
+    channel = MeetingChannel(nia=nia, whisper_model=whisper_model)
+
+    result = channel.process(
+        file_path=file,
+        save_to_memory=True,
+        dispatch_flow=bool(flow_id) and not save_only,
+        flow_id=flow_id,
+    )
+
+    # ── Print to terminal ──────────────────────────────────────────────────
+    print(f"\n{SEPARATOR}")
+    print(f"  📋  REUNIÓN: {Path(file).stem}")
+    print(SEPARATOR)
+    print(result.to_markdown())
+    print(SEPARATOR)
+
+    # ── Save to file ───────────────────────────────────────────────────────
+    out = output_file or (Path(file).stem + "_nia.md")
+    Path(out).write_text(result.to_markdown(), encoding="utf-8")
+    print(f"\n💾  Informe guardado en: {out}\n")
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Triage Analytical Pipeline")
     parser.add_argument(
         "--mode",
-        choices=["demo", "email", "chat", "inbox", "telegram"],
+        choices=["demo", "email", "chat", "inbox", "telegram", "meeting"],
         default="demo",
         help=(
             "demo     = dos emails de ejemplo (default)\n"
             "email    = modo interactivo email\n"
             "chat     = modo interactivo chat\n"
             "inbox    = demo encolado + poll\n"
-            "telegram = inicia el bot de Telegram (requiere TELEGRAM_BOT_TOKEN en .env)"
+            "telegram = inicia el bot de Telegram (requiere TELEGRAM_BOT_TOKEN en .env)\n"
+            "meeting  = transcribe y analiza una grabación de reunión"
         ),
     )
     parser.add_argument(
@@ -291,11 +346,54 @@ def main() -> None:
         default=None,
         help="Texto crudo del email/mensaje a triár directamente (no interactivo).",
     )
+    # Meeting-specific arguments
+    parser.add_argument(
+        "--file",
+        type=str,
+        default=None,
+        help="[meeting] Ruta al archivo de audio/video (mp4, m4a, mp3, wav, …).",
+    )
+    parser.add_argument(
+        "--whisper-model",
+        type=str,
+        default="base",
+        choices=["tiny", "base", "small", "medium", "large"],
+        help="[meeting] Modelo de Whisper a usar (default: base).",
+    )
+    parser.add_argument(
+        "--flow",
+        type=str,
+        default=None,
+        help="[meeting] Flujo de agentes a ejecutar con el transcript (ej: strategy_crew).",
+    )
+    parser.add_argument(
+        "--save-only",
+        action="store_true",
+        help="[meeting] Sólo guardar en memoria — no ejecutar flujos.",
+    )
+    parser.add_argument(
+        "--output",
+        type=str,
+        default=None,
+        help="[meeting] Nombre del archivo de salida Markdown (default: <nombre_archivo>_nia.md).",
+    )
     args = parser.parse_args()
 
     if args.email:
         result = run_triage(args.email)
         _print_result("Email proporcionado por CLI", result)
+        return
+
+    if args.mode == "meeting":
+        if not args.file:
+            parser.error("--mode meeting requiere --file <ruta_al_archivo>")
+        mode_meeting(
+            file=args.file,
+            whisper_model=args.whisper_model,
+            flow_id=args.flow,
+            save_only=args.save_only,
+            output_file=args.output,
+        )
         return
 
     modes = {
