@@ -13,11 +13,16 @@ import {
   Mail,
   Volume2,
   Mic,
+  Video,
+  FileAudio,
+  Terminal,
 } from 'lucide-react';
+
+type Tab = 'telegram' | 'email' | 'meeting';
 
 export default function ChannelsPage() {
   const [cfg, setCfg] = useState<NiaConfig | null>(null);
-  const [tab, setTab] = useState<'telegram' | 'email'>('telegram');
+  const [tab, setTab] = useState<Tab>('telegram');
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
@@ -100,10 +105,16 @@ export default function ChannelsPage() {
       <div className="flex gap-1 p-1 rounded-lg bg-muted w-fit">
         {(
           [
-            { id: 'telegram', label: 'Telegram', icon: MessageCircle },
-            { id: 'email', label: 'Email', icon: Mail },
+            { id: 'telegram', label: 'Telegram',  icon: MessageCircle },
+            { id: 'email',    label: 'Email',      icon: Mail },
+            { id: 'meeting',  label: 'Reuniones',  icon: Video },
           ] as const
-        ).map(({ id, label, icon: Icon }) => (
+        ).map(({ id, label, icon: Icon }) => {
+          const isOn =
+            id === 'telegram' ? cfg.telegram.enabled :
+            id === 'email'    ? cfg.email.enabled :
+            true; // meeting always available
+          return (
           <button
             key={id}
             onClick={() => setTab(id)}
@@ -115,15 +126,14 @@ export default function ChannelsPage() {
           >
             <Icon className="h-4 w-4" />
             {label}
-            <Badge variant={
-              (id === 'telegram' ? cfg.telegram.enabled : cfg.email.enabled)
-                ? 'default'
-                : 'secondary'
-            } className="text-[10px] px-1.5 py-0">
-              {(id === 'telegram' ? cfg.telegram.enabled : cfg.email.enabled) ? 'ON' : 'OFF'}
-            </Badge>
+            {id !== 'meeting' && (
+              <Badge variant={isOn ? 'default' : 'secondary'} className="text-[10px] px-1.5 py-0">
+                {isOn ? 'ON' : 'OFF'}
+              </Badge>
+            )}
           </button>
-        ))}
+          );
+        })}
       </div>
 
       {/* ── Telegram tab ────────────────────────────────────────────────── */}
@@ -316,6 +326,135 @@ export default function ChannelsPage() {
             </div>
           </CardContent>
         </Card>
+      )}
+
+      {/* ── Meeting tab ─────────────────────────────────────────────────── */}
+      {tab === 'meeting' && (
+        <div className="space-y-4">
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2 text-base">
+                <Video className="h-4 w-4" />
+                Canal Reuniones
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-5">
+              <p className="text-sm text-muted-foreground">
+                Nia puede transcribir y analizar reuniones de Teams, Zoom o cualquier grabación.
+                Usa Whisper localmente — ningún audio sale de tu equipo.
+              </p>
+
+              {/* Flujo visual */}
+              <div>
+                <p className="text-sm font-medium mb-3">Flujo de procesamiento</p>
+                <div className="flex items-center gap-2 flex-wrap">
+                  {[
+                    { icon: FileAudio, label: 'Archivo / Micrófono', color: 'text-yellow-500' },
+                    { icon: null, label: '→', color: 'text-muted-foreground' },
+                    { icon: Mic, label: 'ffmpeg → WAV 16kHz', color: 'text-blue-500' },
+                    { icon: null, label: '→', color: 'text-muted-foreground' },
+                    { icon: Volume2, label: 'Whisper', color: 'text-purple-500' },
+                    { icon: null, label: '→', color: 'text-muted-foreground' },
+                    { icon: Radio, label: 'Nia analiza', color: 'text-green-500' },
+                  ].map(({ icon: Icon, label, color }, i) =>
+                    Icon ? (
+                      <div key={i} className={`flex items-center gap-1.5 text-xs font-medium ${color}`}>
+                        <Icon className="h-3.5 w-3.5" />
+                        {label}
+                      </div>
+                    ) : (
+                      <span key={i} className="text-xs text-muted-foreground">{label}</span>
+                    )
+                  )}
+                </div>
+              </div>
+
+              {/* Modelos Whisper */}
+              <div className="rounded-lg border border-border p-4 space-y-3">
+                <p className="text-sm font-medium">Modelos Whisper disponibles</p>
+                <div className="space-y-2">
+                  {[
+                    { model: 'tiny',   speed: '★★★★★', accuracy: '★★☆☆☆', use: 'Pruebas rápidas' },
+                    { model: 'base',   speed: '★★★★☆', accuracy: '★★★☆☆', use: 'Uso diario (recomendado)' },
+                    { model: 'small',  speed: '★★★☆☆', accuracy: '★★★★☆', use: 'Mayor precisión' },
+                    { model: 'medium', speed: '★★☆☆☆', accuracy: '★★★★★', use: 'Transcripciones críticas' },
+                    { model: 'large',  speed: '★☆☆☆☆', accuracy: '★★★★★', use: 'Máxima calidad' },
+                  ].map(({ model, speed, accuracy, use }) => (
+                    <div key={model} className="grid grid-cols-4 gap-2 text-xs items-center">
+                      <code className="text-primary font-mono">{model}</code>
+                      <span className="text-muted-foreground" title="Velocidad">{speed}</span>
+                      <span className="text-muted-foreground" title="Precisión">{accuracy}</span>
+                      <span className="text-muted-foreground">{use}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+
+          {/* Modos de uso */}
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2 text-base">
+                <Terminal className="h-4 w-4" />
+                Cómo usarlo
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-4">
+
+              <div className="space-y-1">
+                <p className="text-sm font-medium flex items-center gap-2">
+                  <FileAudio className="h-4 w-4 text-blue-500" />
+                  Archivo grabado (post-reunión)
+                </p>
+                <p className="text-xs text-muted-foreground mb-2">
+                  Descarga la grabación de Teams/Zoom y pásasela a Nia.
+                </p>
+                <div className="rounded-md bg-muted p-3 space-y-1 font-mono text-xs">
+                  <p><span className="text-muted-foreground"># Básico</span></p>
+                  <p>make meeting FILE=reunion.mp4</p>
+                  <p className="mt-2"><span className="text-muted-foreground"># Mayor precisión</span></p>
+                  <p>make meeting FILE=reunion.mp4 MODEL=small</p>
+                  <p className="mt-2"><span className="text-muted-foreground"># Con flujo estratégico</span></p>
+                  <p>make meeting FILE=reunion.mp4 FLOW=strategy_crew</p>
+                </div>
+              </div>
+
+              <div className="h-px bg-border" />
+
+              <div className="space-y-1">
+                <p className="text-sm font-medium flex items-center gap-2">
+                  <Mic className="h-4 w-4 text-green-500" />
+                  En tiempo real (durante la reunión)
+                </p>
+                <p className="text-xs text-muted-foreground mb-2">
+                  Inicia antes de entrar a la llamada. Ctrl+C al terminar → Nia analiza automáticamente.
+                </p>
+                <div className="rounded-md bg-muted p-3 space-y-1 font-mono text-xs">
+                  <p><span className="text-muted-foreground"># Micrófono físico (lo que se dice en la sala)</span></p>
+                  <p>make live</p>
+                  <p className="mt-2"><span className="text-muted-foreground"># Con nombre de reunión</span></p>
+                  <p>make live TITLE=kickoff_q2</p>
+                  <p className="mt-2"><span className="text-muted-foreground"># Audio del sistema (Teams/Zoom por parlantes)</span></p>
+                  <p><span className="text-muted-foreground"># Requiere BlackHole instalado como dispositivo de salida</span></p>
+                  <p>make live DEVICE=1</p>
+                </div>
+              </div>
+
+              <div className="rounded-lg border border-amber-500/30 bg-amber-500/5 p-3">
+                <p className="text-xs font-medium text-amber-600 dark:text-amber-400 mb-1">
+                  🎧 Para capturar audio de Teams/Zoom
+                </p>
+                <p className="text-xs text-muted-foreground">
+                  Instala <strong>BlackHole</strong> (gratis) desde{' '}
+                  <code className="text-primary">existential.audio/blackhole</code>,
+                  configúralo como salida de audio en macOS y usa <code>DEVICE=1</code>.
+                  Así Nia escucha exactamente lo mismo que tú.
+                </p>
+              </div>
+            </CardContent>
+          </Card>
+        </div>
       )}
     </div>
   );
