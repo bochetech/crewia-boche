@@ -2,14 +2,32 @@
 CrewIA Panel — FastAPI backend
 ===============================
 Endpoints
-  GET  /api/config              → devuelve agents.yaml + tasks.yaml como JSON
-  PUT  /api/config              → guarda cambios en agents.yaml + tasks.yaml
-  GET  /api/config/lmstudio     → estado de conexión LM Studio
-  POST /api/crew/run            → lanza kickoff_strategy_crew en background
-  GET  /api/executions          → historial de ejecuciones
-  GET  /api/executions/{id}     → detalle de una ejecución
-  GET  /api/initiatives         → lista todas las iniciativas del HTML SSOT
-  WS   /ws/execution/{id}       → streaming de eventos en tiempo real
+  GET  /api/config                    → agentes + tareas + herramientas + flujos
+  PUT  /api/config                    → guarda agentes + tareas + flujos
+  GET  /api/config/lmstudio           → estado de conexión LM Studio
+
+  GET  /api/agents                    → lista agentes
+  POST /api/agents                    → crear agente
+  PUT  /api/agents/{id}               → editar agente
+  DELETE /api/agents/{id}             → eliminar agente
+
+  GET  /api/tasks                     → lista tareas (con agente asociado)
+  POST /api/tasks                     → crear tarea
+  PUT  /api/tasks/{id}                → editar tarea
+  DELETE /api/tasks/{id}              → eliminar tarea
+
+  GET  /api/tools                     → lista herramientas registradas (read-only)
+
+  GET  /api/flows                     → lista flujos
+  POST /api/flows                     → crear flujo
+  PUT  /api/flows/{id}                → editar flujo
+  DELETE /api/flows/{id}              → eliminar flujo
+
+  POST /api/crew/run                  → lanza ejecución en background
+  GET  /api/executions                → historial
+  GET  /api/executions/{id}           → detalle
+  GET  /api/initiatives               → HTML SSOT
+  WS   /ws/execution/{id}             → streaming en tiempo real
 """
 from __future__ import annotations
 
@@ -39,9 +57,12 @@ from api.models import (
     CrewConfig,
     ExecutionRecord,
     ExecutionStatus,
+    Flow,
+    FlowStep,
     RunCrewRequest,
     RunCrewResponse,
     TaskConfig,
+    ToolConfig,
 )
 from api.store import store
 
@@ -53,6 +74,7 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name
 # ---------------------------------------------------------------------------
 AGENTS_CFG = _ROOT / "config" / "agents.yaml"
 TASKS_CFG  = _ROOT / "config" / "tasks.yaml"
+FLOWS_CFG  = _ROOT / "config" / "flows.yaml"
 
 
 # ---------------------------------------------------------------------------
@@ -107,6 +129,7 @@ def _agents_yaml_to_list(raw: dict) -> List[AgentConfig]:
             goal=cfg.get("goal", ""),
             backstory=cfg.get("backstory", ""),
             max_iter=cfg.get("max_iter", 3),
+            llm_model=cfg.get("llm_model", "gemini-2.5-flash"),
             tools=cfg.get("tools", []),
         ))
     return result
@@ -118,32 +141,118 @@ def _tasks_yaml_to_list(raw: dict) -> List[TaskConfig]:
     for t in tasks_raw:
         result.append(TaskConfig(
             id=t.get("id", ""),
+            title=t.get("title", ""),
             description=t.get("description", ""),
             expected_result=t.get("expected_result", ""),
-            agent_id=t.get("agent", ""),
+            agent_id=t.get("owner", t.get("agent", "")),
         ))
     return result
 
 
+def _flows_yaml_to_list(raw: dict) -> List[Flow]:
+    flows_raw = raw.get("flows", [])
+    result = []
+    for f in flows_raw:
+        steps = [
+            FlowStep(
+                agent_id=s.get("agent_id", ""),
+                task_id=s.get("task_id", ""),
+                label=s.get("label", ""),
+                parallel_group=s.get("parallel_group"),
+            )
+            for s in f.get("steps", [])
+        ]
+        result.append(Flow(
+            id=f.get("id", str(uuid.uuid4())),
+            name=f.get("name", ""),
+            description=f.get("description", ""),
+            goal=f.get("goal", ""),
+            steps=steps,
+        ))
+    return result
+
+
+def _get_registered_tools() -> List[ToolConfig]:
+    """Return the list of tools that are registered in the codebase."""
+    tools = [
+        ToolConfig(
+            id="html_strategy_database",
+            name="HTML Strategy Database",
+            description="Lee, crea, actualiza y busca iniciativas en el HTML SSOT (estrategia_descorcha.html). Usa ChromaDB para búsqueda semántica de duplicados.",
+            source="src.strategy_tools.html_strategy_tool.HTMLStrategyTool",
+            parameters=["action", "initiative_id", "foco", "initiative_data", "query", "threshold"],
+        ),
+        ToolConfig(
+            id="serper_search",
+            name="SerperDev Web Search",
+            description="Busca información técnica en la web (APIs, documentación, benchmarks). Requiere SERPER_API_KEY.",
+            source="crewai_tools.SerperDevTool",
+            parameters=["search_query"],
+        ),
+        ToolConfig(
+            id="email_drafting",
+            name="Email Drafting Tool",
+            description="Redacta borradores de correos electrónicos de seguimiento estratégico.",
+            source="src.tools.EmailDraftingTool",
+            parameters=["recipient_name", "recipient_email", "subject", "context", "action_requested", "urgency"],
+        ),
+        ToolConfig(
+            id="confluence_upsert",
+            name="Confluence Upsert Tool",
+            description="Crea o actualiza páginas en Confluence con información estratégica.",
+            source="src.tools.ConfluenceUpsertTool",
+            parameters=["space_key", "title", "content", "labels"],
+        ),
+        ToolConfig(
+            id="leader_notification",
+            name="Leader Notification Tool",
+            description="Envía notificaciones al líder vía Telegram con el resultado del triage.",
+            source="src.tools.LeaderNotificationTool",
+            parameters=["channel", "classification", "summary", "actions_taken", "pending_approvals"],
+        ),
+        ToolConfig(
+            id="email_inbox",
+            name="Email Inbox Tool",
+            description="Lee mensajes pendientes de la bandeja de entrada de email.",
+            source="src.input_sources.EmailInboxTool",
+            parameters=[],
+        ),
+        ToolConfig(
+            id="chat_inbox",
+            name="Chat Message Inbox Tool",
+            description="Lee mensajes pendientes del inbox de chat (Telegram, etc.).",
+            source="src.input_sources.ChatMessageInboxTool",
+            parameters=[],
+        ),
+    ]
+    return tools
+
+
+import uuid as _uuid_mod
+
+
 # ---------------------------------------------------------------------------
-# Routes — Config
+# Routes — Config (combined)
 # ---------------------------------------------------------------------------
 
 @app.get("/api/config", response_model=CrewConfig, tags=["Config"])
 def get_config():
-    """Devuelve la configuración actual de agentes y tareas."""
+    """Devuelve la configuración completa: agentes, tareas, herramientas y flujos."""
     agents_raw = _load_yaml(AGENTS_CFG)
     tasks_raw  = _load_yaml(TASKS_CFG)
+    flows_raw  = _load_yaml(FLOWS_CFG)
     return CrewConfig(
         agents=_agents_yaml_to_list(agents_raw),
         tasks=_tasks_yaml_to_list(tasks_raw),
+        tools=_get_registered_tools(),
+        flows=_flows_yaml_to_list(flows_raw),
     )
 
 
 @app.put("/api/config", response_model=ConfigUpdateResponse, tags=["Config"])
 def update_config(body: CrewConfig):
-    """Guarda la configuración de agentes y tareas en disco (YAML)."""
-    # Rebuild agents.yaml
+    """Guarda agentes, tareas y flujos en disco (YAML)."""
+    # agents.yaml
     agents_dict: Dict[str, Any] = {}
     for a in body.agents:
         agents_dict[a.id] = {
@@ -151,20 +260,42 @@ def update_config(body: CrewConfig):
             "goal":      a.goal,
             "backstory": a.backstory,
             "max_iter":  a.max_iter,
+            "llm_model": a.llm_model,
             "tools":     a.tools,
         }
     _save_yaml(AGENTS_CFG, {"agents": agents_dict})
 
-    # Rebuild tasks.yaml
+    # tasks.yaml
     tasks_list = []
     for t in body.tasks:
         tasks_list.append({
             "id":              t.id,
+            "title":           t.title,
             "description":     t.description,
             "expected_result": t.expected_result,
-            "agent":           t.agent_id,
+            "owner":           t.agent_id,
         })
     _save_yaml(TASKS_CFG, {"tasks": tasks_list})
+
+    # flows.yaml
+    flows_list = []
+    for f in body.flows:
+        flows_list.append({
+            "id":          f.id,
+            "name":        f.name,
+            "description": f.description,
+            "goal":        f.goal,
+            "steps":       [
+                {
+                    "agent_id":       s.agent_id,
+                    "task_id":        s.task_id,
+                    "label":          s.label,
+                    "parallel_group": s.parallel_group,
+                }
+                for s in f.steps
+            ],
+        })
+    _save_yaml(FLOWS_CFG, {"flows": flows_list})
 
     return ConfigUpdateResponse(message="Configuración guardada correctamente")
 
@@ -181,6 +312,174 @@ def lmstudio_status():
     except Exception as exc:
         return {"status": "disconnected", "error": str(exc), "base_url": base_url}
     return {"status": "disconnected", "base_url": base_url}
+
+
+# ---------------------------------------------------------------------------
+# Routes — Agents CRUD
+# ---------------------------------------------------------------------------
+
+@app.get("/api/agents", response_model=List[AgentConfig], tags=["Agents"])
+def list_agents():
+    return _agents_yaml_to_list(_load_yaml(AGENTS_CFG))
+
+
+@app.post("/api/agents", response_model=AgentConfig, tags=["Agents"])
+def create_agent(agent: AgentConfig):
+    raw = _load_yaml(AGENTS_CFG)
+    agents = raw.get("agents", {})
+    if agent.id in agents:
+        raise HTTPException(status_code=409, detail=f"Ya existe un agente con id '{agent.id}'")
+    agents[agent.id] = {
+        "role": agent.role, "goal": agent.goal, "backstory": agent.backstory,
+        "max_iter": agent.max_iter, "llm_model": agent.llm_model, "tools": agent.tools,
+    }
+    _save_yaml(AGENTS_CFG, {"agents": agents})
+    return agent
+
+
+@app.put("/api/agents/{agent_id}", response_model=AgentConfig, tags=["Agents"])
+def update_agent(agent_id: str, agent: AgentConfig):
+    raw = _load_yaml(AGENTS_CFG)
+    agents = raw.get("agents", {})
+    if agent_id not in agents:
+        raise HTTPException(status_code=404, detail="Agente no encontrado")
+    agents[agent_id] = {
+        "role": agent.role, "goal": agent.goal, "backstory": agent.backstory,
+        "max_iter": agent.max_iter, "llm_model": agent.llm_model, "tools": agent.tools,
+    }
+    _save_yaml(AGENTS_CFG, {"agents": agents})
+    return agent
+
+
+@app.delete("/api/agents/{agent_id}", tags=["Agents"])
+def delete_agent(agent_id: str):
+    raw = _load_yaml(AGENTS_CFG)
+    agents = raw.get("agents", {})
+    if agent_id not in agents:
+        raise HTTPException(status_code=404, detail="Agente no encontrado")
+    del agents[agent_id]
+    _save_yaml(AGENTS_CFG, {"agents": agents})
+    return {"ok": True, "message": f"Agente '{agent_id}' eliminado"}
+
+
+# ---------------------------------------------------------------------------
+# Routes — Tasks CRUD
+# ---------------------------------------------------------------------------
+
+@app.get("/api/tasks", response_model=List[TaskConfig], tags=["Tasks"])
+def list_tasks():
+    return _tasks_yaml_to_list(_load_yaml(TASKS_CFG))
+
+
+@app.post("/api/tasks", response_model=TaskConfig, tags=["Tasks"])
+def create_task(task: TaskConfig):
+    raw = _load_yaml(TASKS_CFG)
+    tasks = raw.get("tasks", [])
+    if any(t.get("id") == task.id for t in tasks):
+        raise HTTPException(status_code=409, detail=f"Ya existe una tarea con id '{task.id}'")
+    tasks.append({
+        "id": task.id, "title": task.title, "description": task.description,
+        "expected_result": task.expected_result, "owner": task.agent_id,
+    })
+    _save_yaml(TASKS_CFG, {"tasks": tasks})
+    return task
+
+
+@app.put("/api/tasks/{task_id}", response_model=TaskConfig, tags=["Tasks"])
+def update_task(task_id: str, task: TaskConfig):
+    raw = _load_yaml(TASKS_CFG)
+    tasks = raw.get("tasks", [])
+    idx = next((i for i, t in enumerate(tasks) if t.get("id") == task_id), None)
+    if idx is None:
+        raise HTTPException(status_code=404, detail="Tarea no encontrada")
+    tasks[idx] = {
+        "id": task.id, "title": task.title, "description": task.description,
+        "expected_result": task.expected_result, "owner": task.agent_id,
+    }
+    _save_yaml(TASKS_CFG, {"tasks": tasks})
+    return task
+
+
+@app.delete("/api/tasks/{task_id}", tags=["Tasks"])
+def delete_task(task_id: str):
+    raw = _load_yaml(TASKS_CFG)
+    tasks = raw.get("tasks", [])
+    new_tasks = [t for t in tasks if t.get("id") != task_id]
+    if len(new_tasks) == len(tasks):
+        raise HTTPException(status_code=404, detail="Tarea no encontrada")
+    _save_yaml(TASKS_CFG, {"tasks": new_tasks})
+    return {"ok": True, "message": f"Tarea '{task_id}' eliminada"}
+
+
+# ---------------------------------------------------------------------------
+# Routes — Tools (read-only registry)
+# ---------------------------------------------------------------------------
+
+@app.get("/api/tools", response_model=List[ToolConfig], tags=["Tools"])
+def list_tools():
+    """Lista todas las herramientas registradas en el código (read-only)."""
+    return _get_registered_tools()
+
+
+# ---------------------------------------------------------------------------
+# Routes — Flows CRUD
+# ---------------------------------------------------------------------------
+
+@app.get("/api/flows", response_model=List[Flow], tags=["Flows"])
+def list_flows():
+    return _flows_yaml_to_list(_load_yaml(FLOWS_CFG))
+
+
+@app.post("/api/flows", response_model=Flow, tags=["Flows"])
+def create_flow(flow: Flow):
+    raw = _load_yaml(FLOWS_CFG)
+    flows = raw.get("flows", [])
+    if not flow.id:
+        flow = flow.model_copy(update={"id": str(_uuid_mod.uuid4())})
+    if any(f.get("id") == flow.id for f in flows):
+        raise HTTPException(status_code=409, detail=f"Ya existe un flujo con id '{flow.id}'")
+    flows.append({
+        "id": flow.id, "name": flow.name, "description": flow.description,
+        "goal": flow.goal,
+        "steps": [
+            {"agent_id": s.agent_id, "task_id": s.task_id,
+             "label": s.label, "parallel_group": s.parallel_group}
+            for s in flow.steps
+        ],
+    })
+    _save_yaml(FLOWS_CFG, {"flows": flows})
+    return flow
+
+
+@app.put("/api/flows/{flow_id}", response_model=Flow, tags=["Flows"])
+def update_flow(flow_id: str, flow: Flow):
+    raw = _load_yaml(FLOWS_CFG)
+    flows = raw.get("flows", [])
+    idx = next((i for i, f in enumerate(flows) if f.get("id") == flow_id), None)
+    if idx is None:
+        raise HTTPException(status_code=404, detail="Flujo no encontrado")
+    flows[idx] = {
+        "id": flow.id, "name": flow.name, "description": flow.description,
+        "goal": flow.goal,
+        "steps": [
+            {"agent_id": s.agent_id, "task_id": s.task_id,
+             "label": s.label, "parallel_group": s.parallel_group}
+            for s in flow.steps
+        ],
+    }
+    _save_yaml(FLOWS_CFG, {"flows": flows})
+    return flow
+
+
+@app.delete("/api/flows/{flow_id}", tags=["Flows"])
+def delete_flow(flow_id: str):
+    raw = _load_yaml(FLOWS_CFG)
+    flows = raw.get("flows", [])
+    new_flows = [f for f in flows if f.get("id") != flow_id]
+    if len(new_flows) == len(flows):
+        raise HTTPException(status_code=404, detail="Flujo no encontrado")
+    _save_yaml(FLOWS_CFG, {"flows": new_flows})
+    return {"ok": True, "message": f"Flujo '{flow_id}' eliminado"}
 
 
 # ---------------------------------------------------------------------------

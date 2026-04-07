@@ -17,42 +17,32 @@ import ReactFlow, {
 import 'reactflow/dist/style.css';
 import { cn } from '@/lib/utils';
 import { Badge } from '@/components/ui/badge';
-import type { AgentStepEvent, ExecutionRecord } from '@/lib/types';
+import type { ExecutionRecord, Flow } from '@/lib/types';
 
 // ---------------------------------------------------------------------------
-// Agent metadata
+// Default colors for agents by index (when no meta is known)
 // ---------------------------------------------------------------------------
-const AGENT_META: Record<string, { label: string; color: string; description: string }> = {
-  strategist: {
-    label: 'Triage Strategist',
-    color: 'hsl(238 82% 63%)',
-    description: 'Clasifica la iniciativa en Focos F1-F4 o la rechaza como JUNK',
-  },
-  ba: {
-    label: 'Business Analyst',
-    color: 'hsl(199 89% 48%)',
-    description: 'Deduplica y documenta la iniciativa en el HTML SSOT',
-  },
-  researcher: {
-    label: 'Researcher',
-    color: 'hsl(142 76% 36%)',
-    description: 'Valida viabilidad técnica e investiga benchmarks del mercado',
-  },
-  coordinator: {
-    label: 'Coordinator',
-    color: 'hsl(45 93% 47%)',
-    description: 'Aprueba el resultado final antes de escribir al SSOT',
-  },
-};
+const PALETTE = [
+  'hsl(238 82% 63%)',  // indigo
+  'hsl(199 89% 48%)',  // cyan
+  'hsl(142 76% 36%)',  // green
+  'hsl(45 93% 47%)',   // amber
+  'hsl(345 80% 55%)',  // rose
+  'hsl(270 70% 55%)',  // purple
+];
+
+function agentColor(agentId: string, index: number): string {
+  // Deterministic: hash agent ID to palette
+  return PALETTE[index % PALETTE.length];
+}
 
 // ---------------------------------------------------------------------------
 // Custom Agent Node
 // ---------------------------------------------------------------------------
 function AgentNode({ data }: NodeProps) {
-  const meta = AGENT_META[data.agentId] ?? { label: data.agentId, color: '#888', description: '' };
   const statusColors: Record<string, string> = {
-    idle:      'bg-muted-foreground/30',
-    running:   'bg-blue-500/20 border-blue-500/50 animate-pulse_glow',
+    idle:      'border-border bg-card',
+    running:   'bg-blue-500/20 border-blue-500/50 animate-pulse',
     completed: 'bg-emerald-500/20 border-emerald-500/50',
     error:     'bg-destructive/20 border-destructive/50',
   };
@@ -60,11 +50,11 @@ function AgentNode({ data }: NodeProps) {
   return (
     <div
       className={cn(
-        'relative rounded-xl border-2 bg-card p-4 shadow-lg min-w-[180px] cursor-pointer transition-all hover:scale-105',
+        'relative rounded-xl border-2 bg-card p-4 shadow-lg min-w-[160px] cursor-pointer transition-all hover:scale-105',
         statusColors[data.status ?? 'idle'],
       )}
       onClick={data.onSelect}
-      style={{ borderColor: meta.color }}
+      style={{ borderColor: data.color }}
     >
       <Handle type="target" position={Position.Left} className="opacity-0" />
       <div className="flex items-start gap-3">
@@ -78,9 +68,10 @@ function AgentNode({ data }: NodeProps) {
           )}
         />
         <div>
-          <p className="text-sm font-semibold leading-tight" style={{ color: meta.color }}>
-            {meta.label}
+          <p className="text-sm font-semibold leading-tight" style={{ color: data.color }}>
+            {data.label}
           </p>
+          <p className="text-[10px] text-muted-foreground mt-0.5">{data.taskLabel}</p>
           {data.foco && (
             <Badge variant="secondary" className="mt-1 text-[10px]">{data.foco}</Badge>
           )}
@@ -97,67 +88,108 @@ function AgentNode({ data }: NodeProps) {
 const nodeTypes = { agentNode: AgentNode };
 
 // ---------------------------------------------------------------------------
-// Build nodes + edges from execution record
+// Build nodes + edges from a Flow definition + ExecutionRecord
 // ---------------------------------------------------------------------------
 function buildGraph(
+  flow: Flow | null,
   execution: ExecutionRecord | null,
   onSelectAgent: (id: string) => void,
 ): { nodes: Node[]; edges: Edge[] } {
-  const AGENT_IDS = ['strategist', 'ba', 'researcher', 'coordinator'];
-  const X_POSITIONS: Record<string, number> = {
-    strategist: 0,
-    ba: 300,
-    researcher: 300,
-    coordinator: 600,
-  };
-  const Y_POSITIONS: Record<string, number> = {
-    strategist: 100,
-    ba: 0,
-    researcher: 200,
-    coordinator: 100,
-  };
+  // Default fallback: the legacy 4-agent strategy flow
+  const defaultSteps = [
+    { agent_id: 'strategist', task_id: 'strategy_classify', label: 'Clasificar Foco', parallel_group: null },
+    { agent_id: 'ba',         task_id: 'strategy_document', label: 'Documentar HTML', parallel_group: 'analysis' },
+    { agent_id: 'researcher', task_id: 'strategy_research', label: 'Validar Técnico',  parallel_group: 'analysis' },
+    { agent_id: 'coordinator',task_id: 'strategy_coordinate',label: 'Aprobar',        parallel_group: null },
+  ];
+  const steps = (flow?.steps?.length ?? 0) > 0 ? flow!.steps : defaultSteps;
 
-  // Compute per-agent status from steps
+  // Compute per-agent status from execution steps
   const agentStatus: Record<string, string> = {};
   const agentToolCalls: Record<string, number> = {};
-  let focoDetected: string | null = null;
+  let focoDetected: string | null = execution?.foco ?? null;
 
   if (execution) {
-    focoDetected = execution.foco;
-    for (const step of execution.steps) {
-      const a = step.agent;
-      if (step.event === 'started')    agentStatus[a] = 'running';
-      if (step.event === 'completed')  agentStatus[a] = 'completed';
-      if (step.event === 'error')      agentStatus[a] = 'error';
-      if (step.event === 'tool_call')  agentToolCalls[a] = (agentToolCalls[a] ?? 0) + 1;
-    }
-    if (execution.status === 'approved' || execution.status === 'rejected' || execution.status === 'error') {
-      // Mark remaining idle agents
-      AGENT_IDS.forEach((id) => {
-        if (!agentStatus[id]) agentStatus[id] = 'idle';
-      });
+    for (const ev of execution.steps) {
+      const a = ev.agent;
+      if (ev.event === 'started')   agentStatus[a] = 'running';
+      if (ev.event === 'completed') agentStatus[a] = 'completed';
+      if (ev.event === 'error')     agentStatus[a] = 'error';
+      if (ev.event === 'tool_call') agentToolCalls[a] = (agentToolCalls[a] ?? 0) + 1;
     }
   }
 
-  const nodes: Node[] = AGENT_IDS.map((id) => ({
-    id,
-    type: 'agentNode',
-    position: { x: X_POSITIONS[id], y: Y_POSITIONS[id] },
-    data: {
-      agentId: id,
-      status: agentStatus[id] ?? 'idle',
-      foco: id === 'strategist' ? focoDetected : null,
-      toolCalls: agentToolCalls[id] ?? 0,
-      onSelect: () => onSelectAgent(id),
-    },
-  }));
+  // ── Layout algorithm ────────────────────────────────────────────────────
+  // Group steps into columns: sequential steps each get their own column,
+  // steps in the same parallel_group share a column.
+  type Column = { group: string | null; stepIndices: number[] };
+  const columns: Column[] = [];
+  const groupToCol: Record<string, number> = {};
 
-  const edges: Edge[] = [
-    { id: 'e-str-ba',   source: 'strategist', target: 'ba',         animated: agentStatus['ba'] === 'running' },
-    { id: 'e-str-res',  source: 'strategist', target: 'researcher',  animated: agentStatus['researcher'] === 'running' },
-    { id: 'e-ba-coo',   source: 'ba',         target: 'coordinator', animated: agentStatus['coordinator'] === 'running' },
-    { id: 'e-res-coo',  source: 'researcher', target: 'coordinator', animated: agentStatus['coordinator'] === 'running' },
-  ];
+  steps.forEach((step, i) => {
+    if (step.parallel_group) {
+      if (groupToCol[step.parallel_group] !== undefined) {
+        columns[groupToCol[step.parallel_group]].stepIndices.push(i);
+      } else {
+        groupToCol[step.parallel_group] = columns.length;
+        columns.push({ group: step.parallel_group, stepIndices: [i] });
+      }
+    } else {
+      columns.push({ group: null, stepIndices: [i] });
+    }
+  });
+
+  const COL_WIDTH = 260;
+  const ROW_HEIGHT = 130;
+
+  const nodes: Node[] = steps.map((step, i) => {
+    const colIdx = columns.findIndex(c => c.stepIndices.includes(i));
+    const col = columns[colIdx];
+    const rowInCol = col.stepIndices.indexOf(i);
+    const totalInCol = col.stepIndices.length;
+    const x = colIdx * COL_WIDTH;
+    const y = (rowInCol - (totalInCol - 1) / 2) * ROW_HEIGHT;
+
+    const nodeId = `${step.agent_id}_${i}`;
+    const color = agentColor(step.agent_id, i);
+
+    return {
+      id: nodeId,
+      type: 'agentNode',
+      position: { x, y: y + 150 },
+      data: {
+        agentId: step.agent_id,
+        label: step.label || step.agent_id,
+        taskLabel: step.task_id,
+        color,
+        status: agentStatus[step.agent_id] ?? 'idle',
+        foco: step.agent_id === 'triage_strategist' || step.agent_id === 'strategist' ? focoDetected : null,
+        toolCalls: agentToolCalls[step.agent_id] ?? 0,
+        onSelect: () => onSelectAgent(step.agent_id),
+      },
+    };
+  });
+
+  // ── Edges: connect sequential columns and parallel convergence ──────────
+  const edges: Edge[] = [];
+  for (let ci = 1; ci < columns.length; ci++) {
+    const prevCol = columns[ci - 1];
+    const currCol = columns[ci];
+    for (const prevIdx of prevCol.stepIndices) {
+      for (const currIdx of currCol.stepIndices) {
+        const srcAgent = steps[prevIdx].agent_id;
+        const tgtAgent = steps[currIdx].agent_id;
+        const edgeId = `e-${prevIdx}-${currIdx}`;
+        edges.push({
+          id: edgeId,
+          source: `${srcAgent}_${prevIdx}`,
+          target: `${tgtAgent}_${currIdx}`,
+          animated: agentStatus[tgtAgent] === 'running',
+          style: { stroke: 'hsl(222 47% 30%)', strokeWidth: 1.5 },
+        });
+      }
+    }
+  }
 
   return { nodes, edges };
 }
@@ -167,12 +199,13 @@ function buildGraph(
 // ---------------------------------------------------------------------------
 interface ExecutionGraphProps {
   execution: ExecutionRecord | null;
+  flow?: Flow | null;
   onSelectAgent: (agentId: string) => void;
 }
 
-export function ExecutionGraph({ execution, onSelectAgent }: ExecutionGraphProps) {
+export function ExecutionGraph({ execution, flow = null, onSelectAgent }: ExecutionGraphProps) {
   const { nodes: initialNodes, edges: initialEdges } = useMemo(
-    () => buildGraph(execution, onSelectAgent),
+    () => buildGraph(flow, execution, onSelectAgent),
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [],
   );
@@ -180,13 +213,13 @@ export function ExecutionGraph({ execution, onSelectAgent }: ExecutionGraphProps
   const [nodes, setNodes, onNodesChange] = useNodesState(initialNodes);
   const [edges, setEdges, onEdgesChange] = useEdgesState(initialEdges);
 
-  // Re-build graph when execution steps change
+  // Re-build when execution steps change or flow changes
   useEffect(() => {
-    const { nodes: n, edges: e } = buildGraph(execution, onSelectAgent);
+    const { nodes: n, edges: e } = buildGraph(flow, execution, onSelectAgent);
     setNodes(n);
     setEdges(e);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [execution?.steps?.length, execution?.status]);
+  }, [execution?.steps?.length, execution?.status, flow?.id]);
 
   const onConnect = useCallback(
     (params: Connection) => setEdges((eds) => addEdge(params, eds)),
@@ -208,7 +241,10 @@ export function ExecutionGraph({ execution, onSelectAgent }: ExecutionGraphProps
       >
         <Background gap={20} size={1} color="hsl(222 47% 14%)" />
         <Controls showInteractive={false} />
-        <MiniMap nodeColor={(n) => AGENT_META[n.id]?.color ?? '#888'} maskColor="hsl(222 47% 6% / 0.7)" />
+        <MiniMap
+          nodeColor={(n) => (n.data as { color?: string }).color ?? '#888'}
+          maskColor="hsl(222 47% 6% / 0.7)"
+        />
       </ReactFlow>
     </div>
   );

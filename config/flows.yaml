@@ -1,0 +1,50 @@
+flows:
+  # ---------------------------------------------------------------------------
+  # Flujo 1: Multi-Agent Strategy Crew (flujo principal actual)
+  # Objetivo: procesar una iniciativa estratégica, clasificarla en Focos F1-F4,
+  # documentarla en el HTML SSOT y aprobarla.
+  # ---------------------------------------------------------------------------
+  - id: strategy_crew
+    name: "Multi-Agent Strategy Crew"
+    description: >
+      Flujo completo de procesamiento de iniciativas estratégicas.
+      El Triage Strategist clasifica la iniciativa en uno de los 4 Focos (F1-F4),
+      el BA y el Researcher trabajan en paralelo, y el Coordinator aprueba el resultado
+      antes de escribir al HTML SSOT.
+    goal: >
+      Transformar una iniciativa de negocio en una entrada estructurada en el HTML SSOT,
+      con validación técnica, clasificación estratégica y aprobación del Coordinator.
+    steps:
+      - agent_id: triage_strategist
+        task_id: strategy_classify
+        label: "Clasificar Foco"
+        parallel_group: null
+      - agent_id: business_analyst
+        task_id: strategy_document
+        label: "Documentar en HTML"
+        parallel_group: "analysis"
+      - agent_id: researcher
+        task_id: strategy_research
+        label: "Validar Técnico"
+        parallel_group: "analysis"
+      - agent_id: coordinator
+        task_id: strategy_coordinate
+        label: "Aprobar"
+        parallel_group: null
+
+  # ---------------------------------------------------------------------------
+  # Flujo 2: Triaje de Correos (flujo legado)
+  # ---------------------------------------------------------------------------
+  - id: triage_email_flow
+    name: "Triaje Analítico de Correos"
+    description: >
+      Clasifica un correo entrante como STRATEGIC o JUNK.
+      Si es estratégico, documenta y notifica al líder.
+    goal: >
+      Asegurar que ningún correo estratégico sea ignorado y que el equipo
+      esté siempre informado de lo que requiere atención.
+    steps:
+      - agent_id: triage_analyst
+        task_id: triage_email
+        label: "Analizar correo"
+        parallel_group: null

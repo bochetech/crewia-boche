@@ -1,38 +1,39 @@
 'use client';
 import { useState, useRef, useEffect } from 'react';
-import { Play, ChevronRight, X } from 'lucide-react';
+import { Play, ChevronRight, X, GitFork } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { ExecutionGraph } from '@/components/ExecutionGraph';
-import { runCrew, getExecution, createExecutionSocket } from '@/lib/api';
-import type { AgentStepEvent, ExecutionRecord } from '@/lib/types';
-
-const AGENT_LABELS: Record<string, string> = {
-  strategist: 'Triage Strategist',
-  ba:         'Business Analyst',
-  researcher: 'Researcher',
-  coordinator:'Coordinator',
-  system:     'Sistema',
-};
+import { runCrew, getExecution, createExecutionSocket, listFlows } from '@/lib/api';
+import type { AgentStepEvent, ExecutionRecord, Flow } from '@/lib/types';
 
 export default function RunPage() {
-  const [input, setInput]           = useState('');
-  const [execution, setExecution]   = useState<ExecutionRecord | null>(null);
-  const [selectedAgent, setSelectedAgent] = useState<string | null>(null);
-  const [loading, setLoading]       = useState(false);
+  const [input, setInput]                   = useState('');
+  const [execution, setExecution]           = useState<ExecutionRecord | null>(null);
+  const [selectedAgent, setSelectedAgent]   = useState<string | null>(null);
+  const [loading, setLoading]               = useState(false);
+  const [flows, setFlows]                   = useState<Flow[]>([]);
+  const [selectedFlowId, setSelectedFlowId] = useState<string>('');
   const wsRef = useRef<WebSocket | null>(null);
+
+  useEffect(() => {
+    listFlows().then(f => {
+      setFlows(f);
+      if (f.length > 0) setSelectedFlowId(f[0].id);
+    }).catch(console.error);
+  }, []);
+
+  const activeFlow = flows.find(f => f.id === selectedFlowId) ?? null;
 
   async function handleRun() {
     if (!input.trim()) return;
     setLoading(true);
     setSelectedAgent(null);
     try {
-      const { execution_id } = await runCrew(input);
-      // Fetch initial record
+      const { execution_id } = await runCrew(input, selectedFlowId || undefined);
       const rec = await getExecution(execution_id);
       setExecution(rec);
 
-      // Subscribe to WebSocket events
       wsRef.current = createExecutionSocket(
         execution_id,
         (raw) => {
@@ -45,7 +46,6 @@ export default function RunPage() {
           } catch { /* ignore parse errors */ }
         },
         async () => {
-          // Done — fetch final state
           const final = await getExecution(execution_id);
           setExecution(final);
           setLoading(false);
@@ -61,7 +61,6 @@ export default function RunPage() {
     return () => { wsRef.current?.close(); };
   }, []);
 
-  // Steps for selected agent
   const agentSteps = execution?.steps.filter((s) => s.agent === selectedAgent) ?? [];
 
   return (
@@ -70,26 +69,51 @@ export default function RunPage() {
       <div>
         <h1 className="text-3xl font-bold tracking-tight">Ejecutar Crew</h1>
         <p className="text-muted-foreground mt-1">
-          Describe una iniciativa estratégica y observa el proceso multi-agente en tiempo real
+          Describe una iniciativa y observa el proceso multi-agente en tiempo real
         </p>
       </div>
 
-      <div className="flex gap-3">
-        <textarea
-          className="flex-1 rounded-lg border border-border bg-secondary px-4 py-3 text-sm resize-none focus:outline-none focus:ring-2 focus:ring-primary h-24"
-          placeholder="Ej: Implementar integración SAP con Shopify para sincronizar inventario en tiempo real…"
-          value={input}
-          onChange={(e) => setInput(e.target.value)}
-          disabled={loading}
-        />
-        <button
-          onClick={handleRun}
-          disabled={loading || !input.trim()}
-          className="flex items-center gap-2 rounded-lg bg-primary px-6 text-sm font-semibold text-primary-foreground hover:bg-primary/90 disabled:opacity-50 disabled:cursor-not-allowed transition-colors self-start py-3"
-        >
-          <Play className="h-4 w-4" />
-          {loading ? 'Ejecutando…' : 'Iniciar'}
-        </button>
+      <div className="space-y-3">
+        {/* Flow selector */}
+        {flows.length > 0 && (
+          <div className="flex items-center gap-3">
+            <GitFork className="h-4 w-4 text-primary shrink-0" />
+            <label className="text-sm text-muted-foreground shrink-0">Flujo:</label>
+            <select
+              value={selectedFlowId}
+              onChange={e => setSelectedFlowId(e.target.value)}
+              disabled={loading}
+              className="rounded-md border border-border bg-secondary px-3 py-1.5 text-sm focus:outline-none focus:ring-1 focus:ring-primary"
+            >
+              {flows.map(f => (
+                <option key={f.id} value={f.id}>{f.name}</option>
+              ))}
+            </select>
+            {activeFlow?.goal && (
+              <span className="text-xs text-muted-foreground truncate max-w-xs">
+                {activeFlow.goal.slice(0, 80)}…
+              </span>
+            )}
+          </div>
+        )}
+
+        <div className="flex gap-3">
+          <textarea
+            className="flex-1 rounded-lg border border-border bg-secondary px-4 py-3 text-sm resize-none focus:outline-none focus:ring-2 focus:ring-primary h-24"
+            placeholder="Ej: Implementar integración SAP con Shopify para sincronizar inventario en tiempo real…"
+            value={input}
+            onChange={(e) => setInput(e.target.value)}
+            disabled={loading}
+          />
+          <button
+            onClick={handleRun}
+            disabled={loading || !input.trim()}
+            className="flex items-center gap-2 rounded-lg bg-primary px-6 text-sm font-semibold text-primary-foreground hover:bg-primary/90 disabled:opacity-50 disabled:cursor-not-allowed transition-colors self-start py-3"
+          >
+            <Play className="h-4 w-4" />
+            {loading ? 'Ejecutando…' : 'Iniciar'}
+          </button>
+        </div>
       </div>
 
       {/* Main area: graph + side panel */}
@@ -98,21 +122,17 @@ export default function RunPage() {
         <div className="flex-1 min-h-0">
           {execution ? (
             <div className="h-full flex flex-col gap-3">
-              {/* Status bar */}
               <div className="flex items-center gap-3 text-sm">
                 <span className="text-muted-foreground font-mono text-xs">{execution.id.slice(0, 8)}…</span>
                 <StatusBadge status={execution.status} />
                 {execution.foco && <Badge variant="secondary">{execution.foco}</Badge>}
-                {execution.initiative_id && (
-                  <Badge variant="outline">{execution.initiative_id}</Badge>
-                )}
-                <span className="ml-auto text-xs text-muted-foreground">
-                  {execution.steps.length} eventos
-                </span>
+                {execution.initiative_id && <Badge variant="outline">{execution.initiative_id}</Badge>}
+                <span className="ml-auto text-xs text-muted-foreground">{execution.steps.length} eventos</span>
               </div>
               <div className="flex-1 min-h-0">
                 <ExecutionGraph
                   execution={execution}
+                  flow={activeFlow}
                   onSelectAgent={setSelectedAgent}
                 />
               </div>
@@ -120,8 +140,18 @@ export default function RunPage() {
           ) : (
             <div className="h-full flex items-center justify-center rounded-lg border border-dashed border-border text-muted-foreground text-sm">
               <div className="text-center space-y-2">
-                <ChevronRight className="h-10 w-10 mx-auto opacity-30" />
-                <p>Ingresa una iniciativa y presiona <strong>Iniciar</strong></p>
+                {activeFlow ? (
+                  <>
+                    <GitFork className="h-10 w-10 mx-auto opacity-30" />
+                    <p>Flujo: <strong>{activeFlow.name}</strong></p>
+                    <p className="text-xs opacity-70">{activeFlow.steps.length} pasos · Ingresa una iniciativa y presiona <strong>Iniciar</strong></p>
+                  </>
+                ) : (
+                  <>
+                    <ChevronRight className="h-10 w-10 mx-auto opacity-30" />
+                    <p>Ingresa una iniciativa y presiona <strong>Iniciar</strong></p>
+                  </>
+                )}
               </div>
             </div>
           )}
@@ -132,9 +162,7 @@ export default function RunPage() {
           <div className="w-80 shrink-0">
             <Card className="h-full flex flex-col">
               <CardHeader className="flex flex-row items-center justify-between pb-3">
-                <CardTitle className="text-sm">
-                  {AGENT_LABELS[selectedAgent] ?? selectedAgent}
-                </CardTitle>
+                <CardTitle className="text-sm">{selectedAgent}</CardTitle>
                 <button onClick={() => setSelectedAgent(null)} className="text-muted-foreground hover:text-foreground">
                   <X className="h-4 w-4" />
                 </button>

@@ -24,7 +24,7 @@ class ExecutionStatus(str, Enum):
 class AgentStepEvent(BaseModel):
     """Single agent step emitted over WebSocket."""
     execution_id: str
-    agent:        str            # "strategist" | "ba" | "researcher" | "coordinator"
+    agent:        str            # agent id — matches FlowStep.agent_id
     event:        str            # "started" | "tool_call" | "tool_result" | "completed" | "error"
     payload:      Dict[str, Any] = Field(default_factory=dict)
     timestamp:    datetime       = Field(default_factory=datetime.utcnow)
@@ -34,6 +34,7 @@ class ExecutionRecord(BaseModel):
     """Persisted record of one crew execution."""
     id:             str          = Field(default_factory=lambda: str(uuid.uuid4()))
     input_text:     str
+    flow_id:        Optional[str]   = None   # which flow was executed
     status:         ExecutionStatus = ExecutionStatus.PENDING
     foco:           Optional[str]   = None
     initiative_id:  Optional[str]   = None
@@ -50,24 +51,57 @@ class ExecutionRecord(BaseModel):
 # ---------------------------------------------------------------------------
 
 class AgentConfig(BaseModel):
+    """Represents one agent entry in agents.yaml."""
     id:        str
     role:      str
-    goal:      str
-    backstory: str
-    max_iter:  int  = 3
-    tools:     List[str] = Field(default_factory=list)
+    goal:      str       = ""
+    backstory: str       = ""
+    max_iter:  int       = 3
+    llm_model: str       = "gemini-2.5-flash"
+    tools:     List[str] = Field(default_factory=list)  # list of tool ids
 
 
 class TaskConfig(BaseModel):
+    """Represents one task entry in tasks.yaml."""
     id:              str
+    title:           str       = ""
     description:     str
     expected_result: str
-    agent_id:        str
+    agent_id:        str       # maps to AgentConfig.id
+
+
+class ToolConfig(BaseModel):
+    """Represents a registered tool (read-only — defined in Python code)."""
+    id:          str
+    name:        str
+    description: str
+    source:      str       = ""   # python class / module path
+    parameters:  List[str] = Field(default_factory=list)
+
+
+class FlowStep(BaseModel):
+    """One step (node) in a flow: which agent runs which task."""
+    agent_id:    str
+    task_id:     str
+    label:       str       = ""
+    parallel_group: Optional[str] = None  # steps with the same group run in parallel
+
+
+class Flow(BaseModel):
+    """A named flow that orchestrates multiple agents/tasks toward a goal."""
+    id:          str       = Field(default_factory=lambda: str(uuid.uuid4()))
+    name:        str
+    description: str       = ""
+    goal:        str       = ""
+    steps:       List[FlowStep] = Field(default_factory=list)
+    created_at:  datetime  = Field(default_factory=datetime.utcnow)
 
 
 class CrewConfig(BaseModel):
     agents: List[AgentConfig]
     tasks:  List[TaskConfig]
+    tools:  List[ToolConfig] = Field(default_factory=list)
+    flows:  List[Flow]       = Field(default_factory=list)
 
 
 # ---------------------------------------------------------------------------
@@ -75,7 +109,8 @@ class CrewConfig(BaseModel):
 # ---------------------------------------------------------------------------
 
 class RunCrewRequest(BaseModel):
-    input_text: str = Field(..., min_length=1, description="Iniciativa o mensaje a procesar")
+    input_text: str       = Field(..., min_length=1, description="Iniciativa o mensaje a procesar")
+    flow_id:    Optional[str] = Field(None, description="ID del flujo a ejecutar (opcional)")
 
 
 class RunCrewResponse(BaseModel):

@@ -3,20 +3,37 @@ import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import {
   LayoutDashboard,
-  Settings,
   Play,
   History,
-  Cpu,
   Zap,
+  BotMessageSquare,
+  ClipboardList,
+  Wrench,
+  GitFork,
+  ChevronRight,
+  Cpu,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
-const NAV = [
-  { href: '/dashboard',    label: 'Dashboard',    icon: LayoutDashboard },
-  { href: '/run',          label: 'Ejecutar',      icon: Play },
-  { href: '/history',      label: 'Historial',     icon: History },
-  { href: '/initiatives',  label: 'Iniciativas',   icon: Zap },
-  { href: '/config',       label: 'Configuración', icon: Settings },
+const NAV_SECTIONS = [
+  {
+    label: 'Panel',
+    items: [
+      { href: '/dashboard',   label: 'Dashboard',    icon: LayoutDashboard },
+      { href: '/run',         label: 'Ejecutar',      icon: Play },
+      { href: '/history',     label: 'Historial',     icon: History },
+      { href: '/initiatives', label: 'Iniciativas',   icon: Zap },
+    ],
+  },
+  {
+    label: 'Configuración',
+    items: [
+      { href: '/agents',  label: 'Agentes',      icon: BotMessageSquare },
+      { href: '/tasks',   label: 'Tareas',        icon: ClipboardList },
+      { href: '/tools',   label: 'Herramientas',  icon: Wrench },
+      { href: '/flows',   label: 'Flujos',        icon: GitFork },
+    ],
+  },
 ];
 
 export function Sidebar() {
@@ -31,21 +48,34 @@ export function Sidebar() {
       </div>
 
       {/* Nav */}
-      <nav className="flex-1 px-3 py-4 space-y-1">
-        {NAV.map(({ href, label, icon: Icon }) => (
-          <Link
-            key={href}
-            href={href}
-            className={cn(
-              'flex items-center gap-3 rounded-md px-3 py-2 text-sm font-medium transition-colors',
-              pathname === href
-                ? 'bg-primary/10 text-primary'
-                : 'text-muted-foreground hover:bg-secondary hover:text-foreground',
-            )}
-          >
-            <Icon className="h-4 w-4 shrink-0" />
-            {label}
-          </Link>
+      <nav className="flex-1 px-3 py-4 space-y-5 overflow-y-auto">
+        {NAV_SECTIONS.map((section) => (
+          <div key={section.label}>
+            <p className="px-3 mb-1 text-[10px] font-semibold uppercase tracking-widest text-muted-foreground/60">
+              {section.label}
+            </p>
+            <div className="space-y-0.5">
+              {section.items.map(({ href, label, icon: Icon }) => {
+                const active = pathname === href || pathname.startsWith(href + '/');
+                return (
+                  <Link
+                    key={href}
+                    href={href}
+                    className={cn(
+                      'flex items-center gap-3 rounded-md px-3 py-2 text-sm font-medium transition-colors',
+                      active
+                        ? 'bg-primary/10 text-primary'
+                        : 'text-muted-foreground hover:bg-secondary hover:text-foreground',
+                    )}
+                  >
+                    <Icon className="h-4 w-4 shrink-0" />
+                    <span className="flex-1">{label}</span>
+                    {active && <ChevronRight className="h-3 w-3 opacity-50" />}
+                  </Link>
+                );
+              })}
+            </div>
+          </div>
         ))}
       </nav>
 

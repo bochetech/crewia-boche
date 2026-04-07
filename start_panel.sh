@@ -21,7 +21,7 @@ sleep 2
 echo ""
 echo "⚛️  Frontend Next.js → http://localhost:3000"
 cd "$PROJECT_ROOT/web"
-npm run dev &
+NODE_TLS_REJECT_UNAUTHORIZED=0 npm run dev &
 FRONTEND_PID=$!
 
 echo ""
