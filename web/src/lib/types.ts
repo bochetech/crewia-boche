@@ -64,6 +64,7 @@ export interface Flow {
   description: string;
   goal: string;
   steps: FlowStep[];
+  output_type?: string | null;  // e.g. "initiatives" — links to a results view
   created_at?: string;
 }
 

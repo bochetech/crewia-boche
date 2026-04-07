@@ -5,7 +5,6 @@ import {
   LayoutDashboard,
   Play,
   History,
-  Zap,
   BotMessageSquare,
   ClipboardList,
   Wrench,
@@ -19,10 +18,9 @@ const NAV_SECTIONS = [
   {
     label: 'Panel',
     items: [
-      { href: '/dashboard',   label: 'Dashboard',    icon: LayoutDashboard },
-      { href: '/run',         label: 'Ejecutar',      icon: Play },
-      { href: '/history',     label: 'Historial',     icon: History },
-      { href: '/initiatives', label: 'Iniciativas',   icon: Zap },
+      { href: '/dashboard', label: 'Dashboard', icon: LayoutDashboard },
+      { href: '/run',       label: 'Ejecutar',  icon: Play },
+      { href: '/history',   label: 'Historial', icon: History },
     ],
   },
   {

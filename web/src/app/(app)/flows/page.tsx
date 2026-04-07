@@ -1,8 +1,9 @@
 'use client';
 import { useEffect, useState } from 'react';
+import Link from 'next/link';
 import {
   GitFork, Plus, Trash2, Save, ChevronDown, ChevronUp,
-  ArrowRight, GripVertical, Users,
+  ArrowRight, GripVertical, Users, ExternalLink,
 } from 'lucide-react';
 import { Card, CardContent } from '@/components/ui/card';
 import { listFlows, createFlow, updateFlow, deleteFlow, listAgents, listTasks } from '@/lib/api';
@@ -197,7 +198,14 @@ function FlowCard({
             <GitFork className="h-4 w-4 text-primary" />
           </div>
           <div>
-            <p className="text-sm font-semibold">{local.name}</p>
+            <div className="flex items-center gap-2">
+              <p className="text-sm font-semibold">{local.name}</p>
+              {local.output_type === 'initiatives' && (
+                <span className="px-1.5 py-0.5 rounded text-[10px] font-medium bg-emerald-500/15 text-emerald-400 border border-emerald-500/20">
+                  → Iniciativas
+                </span>
+              )}
+            </div>
             <p className="text-xs text-muted-foreground font-mono">
               {local.id} · {local.steps.length} paso{local.steps.length !== 1 ? 's' : ''}
             </p>
@@ -230,6 +238,24 @@ function FlowCard({
             <Field label="Objetivo del flujo" value={local.goal}
               onChange={v => setLocal(p => ({ ...p, goal: v }))} multiline rows={3} />
 
+            {/* output_type */}
+            <div className="space-y-1.5">
+              <label className="text-xs font-medium text-muted-foreground uppercase tracking-wide">
+                Vista de resultados
+              </label>
+              <select
+                className="w-full rounded-md border border-border bg-secondary px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-primary"
+                value={local.output_type ?? ''}
+                onChange={e => setLocal(p => ({ ...p, output_type: e.target.value || null }))}
+              >
+                <option value="">— ninguna —</option>
+                <option value="initiatives">Iniciativas (HTML SSOT)</option>
+              </select>
+              <p className="text-[11px] text-muted-foreground">
+                Vincula este flujo con una vista de resultados. El botón "Ver resultados" aparecerá en la tarjeta.
+              </p>
+            </div>
+
             <StepEditor
               steps={local.steps}
               agents={agents}
@@ -241,11 +267,19 @@ function FlowCard({
             />
           </div>
           <div className="flex justify-between pt-1">
-            <button onClick={() => onSave(local)} disabled={saving}
-              className="flex items-center gap-2 rounded-lg bg-primary px-4 py-2 text-sm font-semibold text-primary-foreground hover:bg-primary/90 disabled:opacity-50 transition-colors">
-              <Save className="h-3.5 w-3.5" />
-              {saving ? 'Guardando…' : 'Guardar cambios'}
-            </button>
+            <div className="flex items-center gap-2">
+              <button onClick={() => onSave(local)} disabled={saving}
+                className="flex items-center gap-2 rounded-lg bg-primary px-4 py-2 text-sm font-semibold text-primary-foreground hover:bg-primary/90 disabled:opacity-50 transition-colors">
+                <Save className="h-3.5 w-3.5" />
+                {saving ? 'Guardando…' : 'Guardar cambios'}
+              </button>
+              {local.output_type === 'initiatives' && (
+                <Link href="/initiatives"
+                  className="flex items-center gap-1.5 rounded-lg border border-emerald-500/40 px-3 py-2 text-sm text-emerald-400 hover:bg-emerald-500/10 transition-colors">
+                  <ExternalLink className="h-3.5 w-3.5" /> Ver resultados
+                </Link>
+              )}
+            </div>
             <button onClick={onDelete}
               className="flex items-center gap-2 rounded-lg border border-destructive/40 px-3 py-2 text-sm text-destructive hover:bg-destructive/10 transition-colors">
               <Trash2 className="h-3.5 w-3.5" /> Eliminar flujo

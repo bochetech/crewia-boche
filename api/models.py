@@ -94,6 +94,7 @@ class Flow(BaseModel):
     description: str       = ""
     goal:        str       = ""
     steps:       List[FlowStep] = Field(default_factory=list)
+    output_type: Optional[str]  = None   # e.g. "initiatives" — links to a results view
     created_at:  datetime  = Field(default_factory=datetime.utcnow)
 
 

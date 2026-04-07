@@ -14,6 +14,7 @@ flows:
     goal: >
       Transformar una iniciativa de negocio en una entrada estructurada en el HTML SSOT,
       con validación técnica, clasificación estratégica y aprobación del Coordinator.
+    output_type: initiatives
     steps:
       - agent_id: triage_strategist
         task_id: strategy_classify

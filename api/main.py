@@ -168,6 +168,7 @@ def _flows_yaml_to_list(raw: dict) -> List[Flow]:
             description=f.get("description", ""),
             goal=f.get("goal", ""),
             steps=steps,
+            output_type=f.get("output_type"),
         ))
     return result
 
@@ -521,8 +522,14 @@ def get_execution(execution_id: str):
 # Background crew runner
 # ---------------------------------------------------------------------------
 
-async def _run_crew_background(execution_id: str, input_text: str) -> None:
-    """Executes kickoff_strategy_crew in a thread and publishes events via WebSocket."""
+async def _run_crew_background(execution_id: str, input_text: str, flow_id: Optional[str] = None) -> None:
+    """Executes the crew for the given flow_id in a thread and publishes events via WebSocket.
+
+    Supported flow_id values:
+      - "strategy_crew"  (default) → kickoff_strategy_crew
+      - "triage_email_flow"        → run_triage  (single-agent email triage)
+      - None / unknown             → falls back to strategy_crew
+    """
 
     loop = asyncio.get_event_loop()
 
@@ -601,8 +608,32 @@ async def _run_crew_background(execution_id: str, input_text: str) -> None:
             )
             return result
 
-        # Run the crew in a thread (it's synchronous / blocking)
-        result = await loop.run_in_executor(None, _patched_kickoff, input_text)
+        def _run_triage_flow(input_text: str) -> dict:
+            """Run the single-agent email triage flow."""
+            loop.call_soon_threadsafe(
+                asyncio.ensure_future,
+                emit("triage_analyst", "started", {"input": input_text[:300]})
+            )
+            result = crew.run_triage(input_text)
+            classification = result.get("classification", "unknown") if isinstance(result, dict) else str(result)
+            loop.call_soon_threadsafe(
+                asyncio.ensure_future,
+                emit("triage_analyst", "completed", {"classification": classification})
+            )
+            return result if isinstance(result, dict) else {"classification": classification, "status": "approved"}
+
+        # ── Dispatch by flow_id ──────────────────────────────────────────────
+        resolved_flow_id = flow_id or "strategy_crew"
+        logger.info("🎯 Ejecutando flujo: %s", resolved_flow_id)
+        await emit("system", "flow_selected", {"flow_id": resolved_flow_id})
+
+        if resolved_flow_id == "triage_email_flow":
+            result = await loop.run_in_executor(None, _run_triage_flow, input_text)
+        else:
+            # Default: strategy_crew (and any unknown flow_id falls back here)
+            if resolved_flow_id != "strategy_crew":
+                logger.warning("⚠️ Flujo '%s' no reconocido — usando strategy_crew como fallback", resolved_flow_id)
+            result = await loop.run_in_executor(None, _patched_kickoff, input_text)
 
         final_status = {
             "approved": ExecutionStatus.APPROVED,
@@ -630,10 +661,10 @@ async def _run_crew_background(execution_id: str, input_text: str) -> None:
 
 @app.post("/api/crew/run", response_model=RunCrewResponse, tags=["Executions"])
 async def run_crew(body: RunCrewRequest, background_tasks: BackgroundTasks):
-    """Lanza una nueva ejecución del Multi-Agent Strategy Crew."""
-    rec = ExecutionRecord(input_text=body.input_text)
+    """Lanza una nueva ejecución del flujo especificado (o strategy_crew por defecto)."""
+    rec = ExecutionRecord(input_text=body.input_text, flow_id=body.flow_id)
     store.create(rec)
-    background_tasks.add_task(_run_crew_background, rec.id, body.input_text)
+    background_tasks.add_task(_run_crew_background, rec.id, body.input_text, body.flow_id)
     return RunCrewResponse(execution_id=rec.id)
 
 
