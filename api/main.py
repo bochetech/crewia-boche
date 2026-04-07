@@ -36,10 +36,11 @@ import json
 import logging
 import os
 import sys
+import uuid as _uuid_mod
 from contextlib import asynccontextmanager
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 import requests
 import yaml
@@ -163,7 +164,7 @@ def _flows_yaml_to_list(raw: dict) -> List[Flow]:
             for s in f.get("steps", [])
         ]
         result.append(Flow(
-            id=f.get("id", str(uuid.uuid4())),
+            id=f.get("id", str(_uuid_mod.uuid4())),
             name=f.get("name", ""),
             description=f.get("description", ""),
             goal=f.get("goal", ""),
@@ -227,9 +228,6 @@ def _get_registered_tools() -> List[ToolConfig]:
         ),
     ]
     return tools
-
-
-import uuid as _uuid_mod
 
 
 # ---------------------------------------------------------------------------
