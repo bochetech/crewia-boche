@@ -301,7 +301,7 @@ def _build_local_llm(enable_reasoning: bool = True) -> Any:
             base_url=base_url,
             api_key="lm-studio",  # Dummy key (LM Studio no requiere auth)
             temperature=0.7,
-            max_tokens=1500 if enable_reasoning else 500,
+            max_tokens=4000 if enable_reasoning else 1500,
         )
         
         logger.debug("LM Studio LLM creado: %s @ %s", model_name, base_url)
@@ -1381,16 +1381,52 @@ Nia (responde de forma concisa y directa):"""
                 api_key = getattr(self.llm, 'api_key', 'lm-studio')
                 
                 # Llamada usando litellm directamente
+                # max_tokens alto para que el modelo de reasoning termine el <think> y genere content
                 response = litellm.completion(
                     model=model,
                     messages=[{"role": "user", "content": prompt}],
                     base_url=base_url,
                     api_key=api_key,
                     temperature=0.7,
-                    max_tokens=500,
+                    max_tokens=2000,
                 )
                 
-                result = response.choices[0].message.content
+                msg = response.choices[0].message
+                result = msg.content or ""
+                
+                # Modelos con reasoning (Gemma, QwQ, DeepSeek-R1, etc.) ponen el texto final
+                # en `content` y el razonamiento en `reasoning_content`.
+                # Si content está vacío, intentar extraer desde reasoning_content como fallback.
+                if not result or not result.strip():
+                    reasoning = getattr(msg, 'reasoning_content', None) or ""
+                    if reasoning:
+                        # El razonamiento terminó sin generar respuesta: re-intentar sin reasoning
+                        logger.warning("content vacío, re-intentando con budget_tokens=0 para forzar respuesta")
+                        try:
+                            response2 = litellm.completion(
+                                model=model,
+                                messages=[
+                                    {"role": "user", "content": prompt},
+                                ],
+                                base_url=base_url,
+                                api_key=api_key,
+                                temperature=0.7,
+                                max_tokens=600,
+                                extra_body={"thinking": {"type": "disabled"}},
+                            )
+                            result = response2.choices[0].message.content or ""
+                        except Exception:
+                            pass
+                        # Si aún vacío, usar el final del reasoning como respuesta
+                        if not result or not result.strip():
+                            # Extraer solo la parte después del bloque de pensamiento
+                            import re as _re
+                            cleaned_reasoning = _re.sub(
+                                r'(?:Thinking Process|thinking|<think>).*?(?:</think>|\n\n(?=[A-ZÁÉÍÓÚÑ¡]))',
+                                '', reasoning, flags=_re.DOTALL | _re.IGNORECASE
+                            ).strip()
+                            result = cleaned_reasoning[:800] if cleaned_reasoning else reasoning[-800:]
+                
                 logger.info("LLM returned result length: %d", len(result) if result else 0)
                 
             except Exception as llm_exc:
