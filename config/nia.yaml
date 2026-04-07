@@ -1,0 +1,44 @@
+nia:
+  name: "Nia"
+  role: "Analista Estratégica de Triaje"
+  personality: "Profesional, directa y estratégica. Responde en español."
+  default_flow: "strategy_crew"
+  telegram_feedback_enabled: true
+  memory_max_topics: 10
+
+channels:
+  telegram:
+    enabled: true
+    mode: conversational        # conversational | triage_only
+    voice_input: true
+    voice_output: true
+    notify_chat_id: null        # override with IMAP_NOTIFY_CHAT_ID env var
+    commands:
+      flujos: list_flows
+      iniciar: dispatch_flow
+      recall: recall_memory
+      topics: list_topics
+      nueva: clear_context
+      status: show_status
+
+  email:
+    enabled: false
+    poll_interval_seconds: 60
+    pipeline:
+      - step: classify
+        discard_if: [spam, notification]
+      - step: summarize
+      - step: notify_telegram
+        format: "📨 Email de {sender}: {summary}"
+      - step: ask_feedback
+        if: analyzable
+        options:
+          - label: "📋 Registrar iniciativa"
+            action: dispatch_flow
+            flow: strategy_crew
+          - label: "🔔 Solo guardar"
+            action: save_to_memory
+          - label: "🗑️ Ignorar"
+            action: discard
+      - step: execute
+        if: user_confirmed

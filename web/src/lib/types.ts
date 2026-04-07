@@ -92,3 +92,47 @@ export interface LMStudioStatus {
   base_url: string;
   error?: string;
 }
+
+// ---------------------------------------------------------------------------
+// Nia + Channel config types (mirrors api/models.py NiaConfig)
+// ---------------------------------------------------------------------------
+
+export interface TelegramChannelConfig {
+  enabled: boolean;
+  mode: 'conversational' | 'triage_only';
+  voice_input: boolean;
+  voice_output: boolean;
+  notify_chat_id: string | null;
+  commands: Record<string, string>;
+}
+
+export interface EmailPipelineOption {
+  label: string;
+  action: 'dispatch_flow' | 'save_to_memory' | 'discard';
+  flow?: string | null;
+}
+
+export interface EmailPipelineStep {
+  step: string;
+  discard_if: string[];
+  if_condition?: string | null;
+  format?: string | null;
+  options: EmailPipelineOption[];
+}
+
+export interface EmailChannelConfig {
+  enabled: boolean;
+  poll_interval_seconds: number;
+  pipeline: EmailPipelineStep[];
+}
+
+export interface NiaConfig {
+  name: string;
+  role: string;
+  personality: string;
+  default_flow: string;
+  telegram_feedback_enabled: boolean;
+  memory_max_topics: number;
+  telegram: TelegramChannelConfig;
+  email: EmailChannelConfig;
+}

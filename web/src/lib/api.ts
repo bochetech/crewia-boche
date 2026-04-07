@@ -5,6 +5,7 @@ import type {
   Flow,
   Initiative,
   LMStudioStatus,
+  NiaConfig,
   TaskConfig,
   ToolConfig,
 } from './types';
@@ -96,3 +97,11 @@ export function createExecutionSocket(
   ws.onerror = () => onDone();
   return ws;
 }
+
+// --- Nia config ---
+export const getNiaConfig = () => apiFetch<NiaConfig>('/api/nia/config');
+export const updateNiaConfig = (cfg: NiaConfig) =>
+  apiFetch<NiaConfig>('/api/nia/config', {
+    method: 'PUT',
+    body: JSON.stringify(cfg),
+  });

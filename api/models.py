@@ -119,6 +119,53 @@ class RunCrewResponse(BaseModel):
     message:      str = "Ejecución iniciada"
 
 
+# ---------------------------------------------------------------------------
+# Nia + Channel config models
+# ---------------------------------------------------------------------------
+
+class TelegramChannelConfig(BaseModel):
+    """Configuration for the Telegram channel adapter."""
+    enabled:          bool            = True
+    mode:             str             = "conversational"   # "conversational" | "triage_only"
+    voice_input:      bool            = True
+    voice_output:     bool            = True
+    notify_chat_id:   Optional[str]   = None
+    commands:         Dict[str, str]  = Field(default_factory=dict)
+
+
+class EmailPipelineOption(BaseModel):
+    label:  str
+    action: str             # "dispatch_flow" | "save_to_memory" | "discard"
+    flow:   Optional[str]   = None
+
+
+class EmailPipelineStep(BaseModel):
+    step:         str                         # "classify"|"summarize"|"notify_telegram"|"ask_feedback"|"execute"
+    discard_if:   List[str]                   = Field(default_factory=list)
+    if_condition: Optional[str]               = None   # renamed from "if" (reserved keyword)
+    format:       Optional[str]               = None
+    options:      List[EmailPipelineOption]   = Field(default_factory=list)
+
+
+class EmailChannelConfig(BaseModel):
+    """Configuration for the Email channel adapter."""
+    enabled:                bool                      = False
+    poll_interval_seconds:  int                       = 60
+    pipeline:               List[EmailPipelineStep]   = Field(default_factory=list)
+
+
+class NiaConfig(BaseModel):
+    """Top-level Nia agent configuration (mirrors config/nia.yaml → nia section)."""
+    name:                        str                   = "Nia"
+    role:                        str                   = "Analista Estratégica de Triaje"
+    personality:                 str                   = ""
+    default_flow:                str                   = "strategy_crew"
+    telegram_feedback_enabled:   bool                  = True
+    memory_max_topics:           int                   = 10
+    telegram:                    TelegramChannelConfig = Field(default_factory=TelegramChannelConfig)
+    email:                       EmailChannelConfig    = Field(default_factory=EmailChannelConfig)
+
+
 class ConfigUpdateResponse(BaseModel):
     ok:      bool = True
     message: str  = "Configuración guardada"

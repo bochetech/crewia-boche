@@ -230,9 +230,45 @@ def mode_inbox_demo() -> None:
 # ---------------------------------------------------------------------------
 
 def mode_telegram() -> None:
-    """Start the Telegram bot (blocking — Ctrl+C to stop)."""
-    from src.telegram_bot import run_bot
-    run_bot()
+    """Start the Telegram bot via NiaAgent + TelegramChannel (blocking — Ctrl+C to stop)."""
+    from dotenv import load_dotenv
+    import os
+    import asyncio
+    import yaml
+    from pathlib import Path
+
+    load_dotenv()
+
+    # Load Nia config
+    from src.nia.agent import NiaAgent, NiaConfig
+    from src.nia.channels.telegram_channel import TelegramChannel, TelegramChannelConfig
+    from src.triage_crew import TriageCrew
+
+    nia_cfg = NiaConfig.from_yaml()
+    crew = TriageCrew()
+    nia = NiaAgent(config=nia_cfg, crew=crew)
+
+    # Load channel config
+    nia_yaml = Path("config/nia.yaml")
+    channels_raw: dict = {}
+    if nia_yaml.exists():
+        with open(nia_yaml) as fh:
+            channels_raw = (yaml.safe_load(fh) or {}).get("channels", {})
+
+    tg_cfg = TelegramChannelConfig.from_env_and_yaml(channels_raw)
+    tg_cfg.token = os.getenv("TELEGRAM_BOT_TOKEN", "")
+    if not tg_cfg.token:
+        raise EnvironmentError(
+            "TELEGRAM_BOT_TOKEN no encontrado.\n"
+            "Agrégalo a .env: TELEGRAM_BOT_TOKEN=123456789:ABCdef..."
+        )
+
+    channel = TelegramChannel(config=tg_cfg, nia=nia)
+
+    print("\n🤖  Nia — Agente Estratégico | Telegram")
+    print("    Iniciando canales…\n")
+
+    asyncio.run(channel.start())
 
 
 def main() -> None:

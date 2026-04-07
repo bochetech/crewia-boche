@@ -56,13 +56,17 @@ from api.models import (
     AgentStepEvent,
     ConfigUpdateResponse,
     CrewConfig,
+    EmailChannelConfig,
+    EmailPipelineStep,
     ExecutionRecord,
     ExecutionStatus,
     Flow,
     FlowStep,
+    NiaConfig,
     RunCrewRequest,
     RunCrewResponse,
     TaskConfig,
+    TelegramChannelConfig,
     ToolConfig,
 )
 from api.store import store
@@ -76,6 +80,7 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name
 AGENTS_CFG = _ROOT / "config" / "agents.yaml"
 TASKS_CFG  = _ROOT / "config" / "tasks.yaml"
 FLOWS_CFG  = _ROOT / "config" / "flows.yaml"
+NIA_CFG    = _ROOT / "config" / "nia.yaml"
 
 
 # ---------------------------------------------------------------------------
@@ -715,3 +720,117 @@ async def ws_execution(websocket: WebSocket, execution_id: str):
 @app.get("/health", tags=["System"])
 def health():
     return {"status": "ok", "timestamp": datetime.utcnow().isoformat()}
+
+
+# ---------------------------------------------------------------------------
+# Routes — Nia config
+# ---------------------------------------------------------------------------
+
+def _load_nia_config() -> NiaConfig:
+    """Load NiaConfig from config/nia.yaml."""
+    raw = _load_yaml(NIA_CFG)
+    nia = raw.get("nia", {})
+    channels = raw.get("channels", {})
+    tg = channels.get("telegram", {})
+    em = channels.get("email", {})
+
+    # Parse email pipeline steps
+    email_steps = []
+    for s in em.get("pipeline", []):
+        opts = [
+            {"label": o.get("label", ""), "action": o.get("action", "discard"), "flow": o.get("flow")}
+            for o in s.get("options", [])
+        ]
+        email_steps.append(EmailPipelineStep(
+            step=s.get("step", ""),
+            discard_if=s.get("discard_if", []),
+            if_condition=s.get("if"),
+            format=s.get("format"),
+            options=opts,
+        ))
+
+    tg_commands = tg.get("commands", {})
+    if isinstance(tg_commands, list):
+        # Handle list format: [{command: action}] → dict
+        tg_commands = {list(item.keys())[0]: list(item.values())[0] for item in tg_commands if isinstance(item, dict)}
+
+    return NiaConfig(
+        name=nia.get("name", "Nia"),
+        role=nia.get("role", "Analista Estratégica de Triaje"),
+        personality=nia.get("personality", ""),
+        default_flow=nia.get("default_flow", "strategy_crew"),
+        telegram_feedback_enabled=nia.get("telegram_feedback_enabled", True),
+        memory_max_topics=int(nia.get("memory_max_topics", 10)),
+        telegram=TelegramChannelConfig(
+            enabled=tg.get("enabled", True),
+            mode=tg.get("mode", "conversational"),
+            voice_input=tg.get("voice_input", True),
+            voice_output=tg.get("voice_output", True),
+            notify_chat_id=tg.get("notify_chat_id"),
+            commands=tg_commands,
+        ),
+        email=EmailChannelConfig(
+            enabled=em.get("enabled", False),
+            poll_interval_seconds=int(em.get("poll_interval_seconds", 60)),
+            pipeline=email_steps,
+        ),
+    )
+
+
+def _save_nia_config(cfg: NiaConfig) -> None:
+    """Save NiaConfig back to config/nia.yaml."""
+    email_pipeline = []
+    for step in cfg.email.pipeline:
+        d: Dict[str, Any] = {"step": step.step}
+        if step.discard_if:
+            d["discard_if"] = step.discard_if
+        if step.if_condition:
+            d["if"] = step.if_condition
+        if step.format:
+            d["format"] = step.format
+        if step.options:
+            d["options"] = [
+                {k: v for k, v in {"label": o.label, "action": o.action, "flow": o.flow}.items() if v is not None}
+                for o in step.options
+            ]
+        email_pipeline.append(d)
+
+    data = {
+        "nia": {
+            "name": cfg.name,
+            "role": cfg.role,
+            "personality": cfg.personality,
+            "default_flow": cfg.default_flow,
+            "telegram_feedback_enabled": cfg.telegram_feedback_enabled,
+            "memory_max_topics": cfg.memory_max_topics,
+        },
+        "channels": {
+            "telegram": {
+                "enabled": cfg.telegram.enabled,
+                "mode": cfg.telegram.mode,
+                "voice_input": cfg.telegram.voice_input,
+                "voice_output": cfg.telegram.voice_output,
+                "notify_chat_id": cfg.telegram.notify_chat_id,
+                "commands": cfg.telegram.commands,
+            },
+            "email": {
+                "enabled": cfg.email.enabled,
+                "poll_interval_seconds": cfg.email.poll_interval_seconds,
+                "pipeline": email_pipeline,
+            },
+        },
+    }
+    _save_yaml(NIA_CFG, data)
+
+
+@app.get("/api/nia/config", response_model=NiaConfig, tags=["Nia"])
+def get_nia_config():
+    """Devuelve la configuración de Nia y sus canales."""
+    return _load_nia_config()
+
+
+@app.put("/api/nia/config", response_model=NiaConfig, tags=["Nia"])
+def update_nia_config(body: NiaConfig):
+    """Guarda la configuración de Nia en config/nia.yaml."""
+    _save_nia_config(body)
+    return body

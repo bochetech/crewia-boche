@@ -11,6 +11,9 @@ import {
   GitFork,
   ChevronRight,
   Cpu,
+  Bot,
+  Radio,
+  Settings,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
@@ -21,15 +24,18 @@ const NAV_SECTIONS = [
       { href: '/dashboard', label: 'Dashboard', icon: LayoutDashboard },
       { href: '/run',       label: 'Ejecutar',  icon: Play },
       { href: '/history',   label: 'Historial', icon: History },
+      { href: '/settings',  label: 'Ajustes',   icon: Settings },
     ],
   },
   {
     label: 'Configuración',
     items: [
-      { href: '/agents',  label: 'Agentes',      icon: BotMessageSquare },
-      { href: '/tasks',   label: 'Tareas',        icon: ClipboardList },
-      { href: '/tools',   label: 'Herramientas',  icon: Wrench },
-      { href: '/flows',   label: 'Flujos',        icon: GitFork },
+      { href: '/nia',      label: 'Nia',          icon: Bot },
+      { href: '/channels', label: 'Canales',       icon: Radio },
+      { href: '/agents',   label: 'Agentes',       icon: BotMessageSquare },
+      { href: '/tasks',    label: 'Tareas',         icon: ClipboardList },
+      { href: '/tools',    label: 'Herramientas',   icon: Wrench },
+      { href: '/flows',    label: 'Flujos',         icon: GitFork },
     ],
   },
 ];
