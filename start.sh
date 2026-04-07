@@ -69,7 +69,7 @@ if $START_NIA; then
     echo "${GRAY}   Agrega TELEGRAM_BOT_TOKEN=... a .env para activar el bot${RESET}"
   else
     echo "${GREEN}🤖 Nia Agent${RESET}      → Telegram + Email watcher"
-    .venv313/bin/python3 main.py --mode telegram 2>&1 | sed 's/^/  [nia] /' &
+    .venv313/bin/python3 main.py --mode nia 2>&1 | sed 's/^/  [nia] /' &
     PIDS+=($!)
   fi
 fi

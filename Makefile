@@ -14,7 +14,7 @@ NPM     := npm
 FILE    ?= $(error Debes indicar el archivo: make meeting FILE=reunion.mp4)
 MODEL   ?= base
 
-.PHONY: all panel nia meeting stop logs test build help
+.PHONY: all panel nia telegram meeting live stop logs test build help
 
 ## Levanta todos los servicios (panel + Nia)
 all:
@@ -24,8 +24,12 @@ all:
 panel:
 	@chmod +x start.sh && ./start.sh --no-nia
 
-## Solo Nia agent (Telegram + email watcher)
+## Solo Nia agent (Telegram + Email — modo producción recomendado)
 nia:
+	@$(PYTHON) main.py --mode nia
+
+## Solo bot de Telegram (sin email)
+telegram:
 	@$(PYTHON) main.py --mode telegram
 
 ## Transcribir y analizar grabación de reunión
@@ -34,6 +38,13 @@ nia:
 ##      make meeting FILE=reunion.mp4 FLOW=strategy_crew
 meeting:
 	@$(PYTHON) main.py --mode meeting --file "$(FILE)" --whisper-model $(MODEL) $(if $(FLOW),--flow $(FLOW),) $(if $(OUTPUT),--output $(OUTPUT),)
+
+## Escuchar reunión en vivo desde el micrófono (Ctrl+C para detener y analizar)
+## Uso: make live
+##      make live TITLE="reunion_lunes" MODEL=small
+##      make live DEVICE=1  (BlackHole/Loopback para audio del sistema)
+live:
+	@$(PYTHON) main.py --mode live --title "$(or $(TITLE),reunion)" --whisper-model $(MODEL) $(if $(FLOW),--flow $(FLOW),)
 
 ## Build del frontend Next.js
 build:
@@ -59,9 +70,12 @@ help:
 	@echo ""
 	@echo "  make                          → todos los servicios"
 	@echo "  make panel                    → solo panel (API + web)"
-	@echo "  make nia                      → solo Nia (Telegram + email)"
+	@echo "  make nia                      → Nia completa (Telegram + Email)"
+	@echo "  make telegram                 → solo bot de Telegram"
 	@echo "  make meeting FILE=reunion.mp4 → transcribir grabación de reunión"
 	@echo "    opciones: MODEL=small  FLOW=strategy_crew  OUTPUT=informe.md"
+	@echo "  make live                     → escuchar reunión en vivo (mic)"
+	@echo "    opciones: TITLE=nombre  MODEL=small  DEVICE=1 (audio sistema)"
 	@echo "  make build                    → build frontend"
 	@echo "  make test                     → tests básicos"
 	@echo "  make stop                     → detener todo"
